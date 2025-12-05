@@ -1,0 +1,29 @@
+[package]
+name = "agent"
+version = "0.1.0"
+edition = "2021"
+description = "Frida agent for ARM64 Android"
+
+[dependencies]
+frida-gum = { path = "../frida-gum", features = [
+    "event-sink",
+    "invocation-listener",
+    "std"
+]}
+qbdi = { path = "../qbdi" }
+libc = "1.0.0-alpha.1"
+jni = "0.21.1"
+once_cell = "1.21.3"
+lazy_static = "1.5.0"
+crossbeam-channel = "0.5"
+prost = "0.13"
+nix = { version = "0.30.1", features = ["ptrace", "socket", "uio"] }
+
+[build-dependencies]
+cc = "1.2.29"
+anyhow = { workspace = true }
+
+[lib]
+name = "agent"
+crate-type = ["cdylib"]
+path = "src/lib.rs"

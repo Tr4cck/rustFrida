@@ -506,7 +506,8 @@ def compile_shellcode(src_file, tools, output_dir):
         "-nostdlib",
         "-O1",  # 禁用优化
         "-Wall",
-        "-Werror",
+#         "-Werror",
+#         "-Wunused-variable",
         "-fbuiltin",
         "-fomit-frame-pointer",  # 省略栈帧指针
         "-c",

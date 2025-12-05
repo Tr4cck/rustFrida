@@ -814,7 +814,17 @@ fn watch_and_inject(so_pattern: &str, timeout_secs: Option<u64>, string_override
 
     match info {
         Some(dlopen_info) => {
-            println!("检测到 SO 加载: pid={}, uid={}, path={}", dlopen_info.pid, dlopen_info.uid, dlopen_info.path);
+            let pid = dlopen_info.pid();
+            if let Some(ns_pid) = dlopen_info.ns_pid {
+                if ns_pid != dlopen_info.host_pid {
+                    println!("检测到 SO 加载: pid={} (host_pid={}), uid={}, path={}",
+                        ns_pid, dlopen_info.host_pid, dlopen_info.uid, dlopen_info.path);
+                } else {
+                    println!("检测到 SO 加载: pid={}, uid={}, path={}", pid, dlopen_info.uid, dlopen_info.path);
+                }
+            } else {
+                println!("检测到 SO 加载: host_pid={}, uid={}, path={}", dlopen_info.host_pid, dlopen_info.uid, dlopen_info.path);
+            }
 
             // 克隆 string_overrides 以便修改
             let mut overrides = string_overrides.clone();
@@ -827,7 +837,7 @@ fn watch_and_inject(so_pattern: &str, timeout_secs: Option<u64>, string_override
                 println!("警告: 未能找到 uid {} 对应的 /data/data/ 目录", dlopen_info.uid);
             }
 
-            inject_to_process(dlopen_info.pid as i32, &overrides)
+            inject_to_process(pid as i32, &overrides)
         }
         None => Err("监听超时，未检测到匹配的 SO 加载".to_string())
     }

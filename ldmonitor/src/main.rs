@@ -17,10 +17,24 @@ fn main() -> anyhow::Result<()> {
     println!("Press Ctrl-C to exit.");
 
     while let Some(info) = monitor.recv() {
-        println!(
-            "android_dlopen_ext called: pid={}, uid={}, path={}",
-            info.pid, info.uid, info.path
-        );
+        if let Some(ns_pid) = info.ns_pid {
+            if ns_pid != info.host_pid {
+                println!(
+                    "android_dlopen_ext called: pid={} (host_pid={}), uid={}, path={}",
+                    ns_pid, info.host_pid, info.uid, info.path
+                );
+            } else {
+                println!(
+                    "android_dlopen_ext called: pid={}, uid={}, path={}",
+                    info.pid(), info.uid, info.path
+                );
+            }
+        } else {
+            println!(
+                "android_dlopen_ext called: host_pid={} (ns_pid unknown), uid={}, path={}",
+                info.host_pid, info.uid, info.path
+            );
+        }
     }
 
     Ok(())

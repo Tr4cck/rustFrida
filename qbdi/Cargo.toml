@@ -1,0 +1,18 @@
+[package]
+name = "qbdi"
+version = "0.12.0"
+edition = "2021"
+authors = ["rustFrida contributors"]
+license = "Apache-2.0"
+description = "Rust bindings for QBDI (QuarkslaB Dynamic binary Instrumentation)"
+
+[features]
+default = []
+
+[dependencies]
+libc = "0.2"
+bitflags = "2"
+
+[build-dependencies]
+cc = "1"
+bindgen = "0.70"
