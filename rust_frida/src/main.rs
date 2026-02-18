@@ -14,6 +14,13 @@ use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::Pid;
 use once_cell::unsync::Lazy;
 use paste::paste;
+use rustyline::Editor;
+use rustyline::completion::{Completer, Pair};
+use rustyline::error::ReadlineError;
+use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
+use rustyline::validate::Validator;
+use rustyline::{Context, Helper};
 use std::ffi::CString;
 use std::fs::File;
 use std::io::{BufRead, BufReader, IoSlice, Write};
@@ -28,7 +35,7 @@ use std::sync::mpsc::{channel, Sender};
 use std::sync::{OnceLock, RwLock};
 use std::thread;
 use std::thread::JoinHandle;
-use std::{io, process};
+use std::process;
 
 static AGENT_MEMFD: AtomicI32 = AtomicI32::new(-1);
 
@@ -860,6 +867,77 @@ fn watch_and_inject(so_pattern: &str, timeout_secs: Option<u64>, string_override
     }
 }
 
+/// 支持的命令列表及其说明
+const COMMANDS: &[(&str, &str, &str)] = &[
+    ("trace",   "[tid]",           "ptrace 指令追踪"),
+    ("jhook",   "",                "Java/JNI hooking"),
+    ("stalker", "[tid]",           "Frida Stalker 追踪"),
+    ("hfl",     "<module> <offset>","Interceptor hook 指定偏移"),
+    ("qfl",     "<module> <offset>","QBDI 追踪指定偏移"),
+    ("jsinit",  "",                "初始化 QuickJS 引擎"),
+    ("loadjs",  "<script>",        "执行 JavaScript 代码"),
+    ("jsclean", "",                "清理 QuickJS 引擎"),
+    ("help",    "",                "显示此帮助信息"),
+];
+
+/// Tab 补全器：仅补全第一个 token（命令名）
+struct CommandCompleter;
+
+impl CommandCompleter {
+    fn new() -> Self {
+        CommandCompleter
+    }
+}
+
+impl Completer for CommandCompleter {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Pair>)> {
+        // 只在光标处于第一个 token 范围内时补全
+        let before_cursor = &line[..pos];
+        if before_cursor.contains(' ') {
+            return Ok((pos, vec![]));
+        }
+        let prefix = before_cursor;
+        let candidates: Vec<Pair> = COMMANDS
+            .iter()
+            .filter(|(cmd, _, _)| cmd.starts_with(prefix))
+            .map(|(cmd, _, _)| Pair {
+                display: cmd.to_string(),
+                replacement: cmd.to_string(),
+            })
+            .collect();
+        Ok((0, candidates))
+    }
+}
+
+impl Hinter for CommandCompleter {
+    type Hint = String;
+}
+impl Highlighter for CommandCompleter {}
+impl Validator for CommandCompleter {}
+impl Helper for CommandCompleter {}
+
+/// 打印命令帮助表
+fn print_help() {
+    use crate::logger::{BOLD, CYAN, GREEN, RESET, YELLOW, DIM};
+    println!("\n{BOLD}{CYAN}可用命令:{RESET}");
+    println!("{DIM}  {:<10} {:<22} {}{RESET}", "命令", "参数", "说明");
+    println!("{DIM}  {:-<10} {:-<22} {:-<20}{RESET}", "", "", "");
+    for (cmd, args, desc) in COMMANDS {
+        println!(
+            "  {BOLD}{GREEN}{:<10}{RESET} {YELLOW}{:<22}{RESET} {}",
+            cmd, args, desc
+        );
+    }
+    println!();
+}
+
 fn main() {
     logger::print_banner();
     let args = Args::parse();
@@ -955,18 +1033,40 @@ fn main() {
         }
     }
 
+    let mut rl = match Editor::new() {
+        Ok(e) => e,
+        Err(e) => {
+            log_error!("初始化行编辑器失败: {}", e);
+            process::exit(1);
+        }
+    };
+    rl.set_helper(Some(CommandCompleter::new()));
     loop {
-        let mut line = String::new();
-        io::stdin()
-            .read_line(&mut line)
-            .expect("读取失败");
-
-        let line = line.trim().to_string();
-
-        match sender.send(line) {
-            Ok(_) => {},
+        match rl.readline("rustfrida> ") {
+            Ok(line) => {
+                let line = line.trim().to_string();
+                if line.is_empty() {
+                    continue;
+                }
+                let _ = rl.add_history_entry(&line);
+                if line == "help" {
+                    print_help();
+                    continue;
+                }
+                match sender.send(line) {
+                    Ok(_) => {},
+                    Err(e) => {
+                        log_error!("发送命令失败: {}", e);
+                        break;
+                    }
+                }
+            }
+            Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => {
+                log_info!("退出交互模式");
+                break;
+            }
             Err(e) => {
-                log_error!("发送命令失败: {}", e);
+                log_error!("读取输入失败: {}", e);
                 break;
             }
         }

@@ -13,57 +13,57 @@ pub const CYAN: &str = "\x1b[36m";
 /// [*] 蓝色前缀 - 通用信息
 #[macro_export]
 macro_rules! log_info {
-    ($($arg:tt)*) => {
+    ($($arg:tt)*) => {{
         println!("{}{} [*]{} {}", $crate::logger::BOLD, $crate::logger::BLUE, $crate::logger::RESET, format_args!($($arg)*));
-    };
+    }};
 }
 
 /// [✓] 绿色前缀 - 成功操作
 #[macro_export]
 macro_rules! log_success {
-    ($($arg:tt)*) => {
+    ($($arg:tt)*) => {{
         println!("{}{} [✓]{} {}", $crate::logger::BOLD, $crate::logger::GREEN, $crate::logger::RESET, format_args!($($arg)*));
-    };
+    }};
 }
 
 /// [!] 黄色前缀 - 警告
 #[macro_export]
 macro_rules! log_warn {
-    ($($arg:tt)*) => {
+    ($($arg:tt)*) => {{
         eprintln!("{}{} [!]{} {}", $crate::logger::BOLD, $crate::logger::YELLOW, $crate::logger::RESET, format_args!($($arg)*));
-    };
+    }};
 }
 
 /// [✗] 红色前缀 - 错误（输出到 stderr）
 #[macro_export]
 macro_rules! log_error {
-    ($($arg:tt)*) => {
+    ($($arg:tt)*) => {{
         eprintln!("{}{} [✗]{} {}", $crate::logger::BOLD, $crate::logger::RED, $crate::logger::RESET, format_args!($($arg)*));
-    };
+    }};
 }
 
 /// [→] 青色前缀 - 步骤/详细信息
 #[macro_export]
 macro_rules! log_step {
-    ($($arg:tt)*) => {
+    ($($arg:tt)*) => {{
         println!("{}{} [→]{} {}", $crate::logger::BOLD, $crate::logger::CYAN, $crate::logger::RESET, format_args!($($arg)*));
-    };
+    }};
 }
 
 /// 地址显示 - 带缩进的地址格式化
 #[macro_export]
 macro_rules! log_addr {
-    ($label:expr, $addr:expr) => {
+    ($label:expr, $addr:expr) => {{
         println!("     {}: {}0x{:x}{}", $label, $crate::logger::DIM, $addr, $crate::logger::RESET);
-    };
+    }};
 }
 
 /// [agent] 紫色前缀 - 来自 agent 的消息
 #[macro_export]
 macro_rules! log_agent {
-    ($($arg:tt)*) => {
+    ($($arg:tt)*) => {{
         println!("{}{} [agent]{} {}", $crate::logger::BOLD, $crate::logger::MAGENTA, $crate::logger::RESET, format_args!($($arg)*));
-    };
+    }};
 }
 
 /// 打印 banner
