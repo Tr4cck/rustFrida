@@ -130,14 +130,19 @@ void hook_engine_cleanup(void);
 void* hook_alloc(size_t size);
 
 /*
- * Relocate ARM64 instruction(s) from src to dst
+ * Relocate ARM64 instruction(s) to dst.
  *
- * @param src           Source address
- * @param dst           Destination address
- * @param count         Number of instructions to relocate
- * @return              Number of bytes written to dst
+ * src_buf  - pointer to a pre-read copy of the original bytes (may differ from
+ *            the live address; typically entry->original_bytes read via
+ *            /proc/self/mem to bypass XOM pages)
+ * src_pc   - original PC of the first instruction (used for PC-relative fixups)
+ * dst      - destination address in the executable pool
+ * min_bytes - number of bytes to relocate
+ *
+ * Returns number of bytes written to dst.
  */
-size_t hook_relocate_instructions(void* src, void* dst, size_t count);
+size_t hook_relocate_instructions(const void* src_buf, uint64_t src_pc,
+                                   void* dst, size_t min_bytes);
 
 /*
  * Generate an absolute jump (MOVZ/MOVK + BR, up to 20 bytes)
@@ -156,6 +161,17 @@ int hook_write_jump(void* dst, void* target);
  */
 void hook_flush_cache(void* start, size_t size);
 
+/*
+ * Log function type: receives a null-terminated message string.
+ * Set via hook_engine_set_log_fn() to route diagnostic output to Rust/socket.
+ */
+typedef void (*HookLogFn)(const char* msg);
+
+/*
+ * Set the log callback.  Call after hook_engine_init().
+ * Pass NULL to disable logging.
+ */
+void hook_engine_set_log_fn(HookLogFn fn);
 
 #ifdef __cplusplus
 }

@@ -43,6 +43,17 @@ use std::sync::Mutex;
 /// pub(crate) so hook_callback_wrapper can serialize concurrent JS_Call invocations.
 pub(crate) static JS_ENGINE: Mutex<Option<JSEngine>> = Mutex::new(None);
 
+/// Log callback registered with the C hook engine.
+/// Routes hook_engine diagnostic messages through the JS console callback
+/// so they appear in the REPL output alongside normal [JS] messages.
+unsafe extern "C" fn hook_engine_log_impl(msg: *const std::os::raw::c_char) {
+    if msg.is_null() {
+        return;
+    }
+    let s = std::ffi::CStr::from_ptr(msg).to_string_lossy();
+    crate::jsapi::console::output_message(&format!("[hook_engine] {}", s));
+}
+
 /// Initialize the hook engine with executable memory
 ///
 /// # Arguments
@@ -56,6 +67,8 @@ pub fn init_hook_engine(exec_mem: *mut u8, size: usize) -> Result<(), String> {
     let result = unsafe { ffi::hook::hook_engine_init(exec_mem as *mut _, size) };
 
     if result == 0 {
+        // Register log callback so wxshadow/prctl diagnostics appear in REPL
+        unsafe { ffi::hook::hook_engine_set_log_fn(Some(hook_engine_log_impl)) };
         Ok(())
     } else {
         Err("Failed to initialize hook engine".to_string())

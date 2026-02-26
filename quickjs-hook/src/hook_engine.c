@@ -13,17 +13,91 @@
 #include <sys/mman.h>
 #include <sys/prctl.h>
 #include <unistd.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <errno.h>
 
 /* wxshadow prctl operations - shadow page patching */
 #ifndef PR_WXSHADOW_PATCH
-#define PR_WXSHADOW_PATCH   0x5758    /* prctl(PR_WXSHADOW_PATCH, page_addr, buf, len) */
+#define PR_WXSHADOW_PATCH   0x57580006  /* prctl(PR_WXSHADOW_PATCH, pid, addr, buf, len) */
 #endif
 #ifndef PR_WXSHADOW_RELEASE
-#define PR_WXSHADOW_RELEASE 0x5759    /* prctl(PR_WXSHADOW_RELEASE, page_addr, len) */
+#define PR_WXSHADOW_RELEASE 0x57580008  /* prctl(PR_WXSHADOW_RELEASE, pid, addr, 0, 0) */
 #endif
 
 /* Global engine state */
 static HookEngine g_engine = {0};
+
+/* --- Diagnostic log infrastructure --- */
+
+static HookLogFn g_log_fn = NULL;
+
+void hook_engine_set_log_fn(HookLogFn fn) {
+    g_log_fn = fn;
+}
+
+static void hook_log(const char* fmt, ...) {
+    if (!g_log_fn) return;
+    char buf[256];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    g_log_fn(buf);
+}
+
+/*
+ * Check if the page containing addr has read permission.
+ * Parses /proc/self/maps to find the VMA and check perms[0] == 'r'.
+ * Returns 1 if readable, 0 otherwise.
+ */
+static int page_has_read_perm(uintptr_t addr) {
+    FILE* f = fopen("/proc/self/maps", "r");
+    if (!f) return 0;
+
+    char line[512];
+    int readable = 0;
+    while (fgets(line, sizeof(line), f)) {
+        uintptr_t start = 0, end = 0;
+        char perms[8] = "";
+        if (sscanf(line, "%lx-%lx %7s", &start, &end, perms) >= 3) {
+            if (addr >= start && addr < end) {
+                readable = (perms[0] == 'r');
+                break;
+            }
+        }
+    }
+    fclose(f);
+    return readable;
+}
+
+/*
+ * Safely read bytes from a target address.
+ *
+ * Strategy:
+ *   1. Check VMA permission — if readable, direct memcpy.
+ *   2. Otherwise mprotect to add read bit, memcpy, then restore.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+static int read_target_safe(void* target, void* buf, size_t len) {
+    /* If page is already readable, just memcpy */
+    if (page_has_read_perm((uintptr_t)target)) {
+        memcpy(buf, target, len);
+        return 0;
+    }
+
+    /* Page not readable (XOM / --x) — mprotect to add read, then memcpy */
+    uintptr_t page_start = (uintptr_t)target & ~(uintptr_t)0xFFF;
+    if (mprotect((void*)page_start, 0x2000, PROT_READ | PROT_EXEC) == 0) {
+        memcpy(buf, target, len);
+        /* restore to original r-x (mprotect already set it to r-x) */
+        return 0;
+    }
+
+    hook_log("read_target_safe: mprotect failed errno=%d", errno);
+    return -1;
+}
 
 /* Minimum instructions to relocate for our jump sequence.
  * arm64_writer_put_branch_address uses MOVZ/MOVK + BR:
@@ -108,66 +182,32 @@ void hook_flush_cache(void* start, size_t size) {
 
 /*
  * Write data to target address via wxshadow prctl.
- * Automatically handles the case where the patch spans two pages.
+ * Tries pid=0 first, then getpid() as fallback.
  *
  * Returns 0 on success, HOOK_ERROR_WXSHADOW_FAILED on failure.
  */
 static int wxshadow_patch(void* addr, const void* buf, size_t len) {
-    uintptr_t start = (uintptr_t)addr;
-    uintptr_t page_mask = ~(uintptr_t)0xFFF;
-    uintptr_t page1 = start & page_mask;
-    size_t offset_in_page = start - page1;
+    int ret = prctl(PR_WXSHADOW_PATCH, 0, (uintptr_t)addr, (uintptr_t)buf, (int)len);
+    if (ret == 0) return 0;
 
-    if (offset_in_page + len <= 4096) {
-        /* Single page — one prctl call */
-        if (prctl(PR_WXSHADOW_PATCH, page1, buf, len, offset_in_page) != 0) {
-            return HOOK_ERROR_WXSHADOW_FAILED;
-        }
-    } else {
-        /* Spans two pages — split into two calls */
-        size_t first_len = 4096 - offset_in_page;
-        size_t second_len = len - first_len;
-        uintptr_t page2 = page1 + 4096;
+    ret = prctl(PR_WXSHADOW_PATCH, getpid(), (uintptr_t)addr, (uintptr_t)buf, (int)len);
+    if (ret == 0) return 0;
 
-        if (prctl(PR_WXSHADOW_PATCH, page1, buf, first_len, offset_in_page) != 0) {
-            return HOOK_ERROR_WXSHADOW_FAILED;
-        }
-        if (prctl(PR_WXSHADOW_PATCH, page2, (const uint8_t*)buf + first_len, second_len, 0) != 0) {
-            return HOOK_ERROR_WXSHADOW_FAILED;
-        }
-    }
-    return 0;
+    hook_log("wxshadow_patch failed: addr=%p len=%zu errno=%d", addr, len, errno);
+    return HOOK_ERROR_WXSHADOW_FAILED;
 }
 
 /*
- * Release wxshadow pages covering [addr, addr+len).
- * Automatically handles cross-page spans.
- *
+ * Release wxshadow shadow at addr.
  * Returns 0 on success, HOOK_ERROR_WXSHADOW_FAILED on failure.
  */
-static int wxshadow_release(void* addr, size_t len) {
-    uintptr_t start = (uintptr_t)addr;
-    uintptr_t page_mask = ~(uintptr_t)0xFFF;
-    uintptr_t page1 = start & page_mask;
-    size_t offset_in_page = start - page1;
-
-    if (offset_in_page + len <= 4096) {
-        if (prctl(PR_WXSHADOW_RELEASE, page1, len, offset_in_page, 0) != 0) {
-            return HOOK_ERROR_WXSHADOW_FAILED;
-        }
-    } else {
-        size_t first_len = 4096 - offset_in_page;
-        size_t second_len = len - first_len;
-        uintptr_t page2 = page1 + 4096;
-
-        if (prctl(PR_WXSHADOW_RELEASE, page1, first_len, offset_in_page, 0) != 0) {
-            return HOOK_ERROR_WXSHADOW_FAILED;
-        }
-        if (prctl(PR_WXSHADOW_RELEASE, page2, second_len, 0, 0) != 0) {
-            return HOOK_ERROR_WXSHADOW_FAILED;
-        }
-    }
-    return 0;
+static int wxshadow_release(void* addr) {
+    int ret;
+    ret = prctl(PR_WXSHADOW_RELEASE, 0, (uintptr_t)addr, 0, 0);
+    if (ret == 0) return 0;
+    ret = prctl(PR_WXSHADOW_RELEASE, getpid(), (uintptr_t)addr, 0, 0);
+    if (ret == 0) return 0;
+    return HOOK_ERROR_WXSHADOW_FAILED;
 }
 
 /* Write an absolute jump using arm64_writer (MOVZ/MOVK + BR sequence) */
@@ -212,28 +252,33 @@ void* hook_alloc(size_t size) {
     return ptr;
 }
 
-/* Relocate instructions from src to dst using arm64_relocator.
+/* Relocate instructions from a pre-read buffer (src_buf) to dst, using
+ * src_pc as the original PC for PC-relative fixups.
+ *
+ * Separating src_buf from src_pc lets the caller read the original bytes
+ * safely (e.g., via /proc/self/mem to bypass XOM) and then pass that buffer
+ * here, while still computing correct relocations against the real address.
  *
  * Within-region branch fix: before the write loop we pre-create one writer
  * label per source instruction and record them in the relocator's region_labels
  * table.  Just before writing each instruction we place its label at the current
  * writer PC.  This allows arm64_relocator_write_one() to emit label-based
  * branches (rather than absolute branches to the now-overwritten original code)
- * for any PC-relative branch whose target lies inside [src, src+min_bytes). */
-size_t hook_relocate_instructions(void* src, void* dst, size_t min_bytes) {
+ * for any PC-relative branch whose target lies inside [src_pc, src_pc+min_bytes). */
+size_t hook_relocate_instructions(const void* src_buf, uint64_t src_pc, void* dst, size_t min_bytes) {
     Arm64Writer w;
     Arm64Relocator r;
 
     arm64_writer_init(&w, dst, (uint64_t)dst, 256);
-    arm64_relocator_init(&r, src, (uint64_t)src, &w);
+    arm64_relocator_init(&r, src_buf, src_pc, &w);
 
     /* Pre-create one label per source instruction in the hook region. */
     int n = (int)(min_bytes / INSN_SIZE);
     if (n > ARM64_RELOC_MAX_REGION) n = ARM64_RELOC_MAX_REGION;
-    r.region_end = (uint64_t)src + min_bytes;
+    r.region_end = src_pc + min_bytes;
     r.region_label_count = n;
     for (int i = 0; i < n; i++) {
-        r.region_labels[i].src_pc = (uint64_t)src + (uint64_t)(i * INSN_SIZE);
+        r.region_labels[i].src_pc = src_pc + (uint64_t)(i * INSN_SIZE);
         r.region_labels[i].label_id = arm64_writer_new_label_id(&w);
     }
 
@@ -346,12 +391,20 @@ void* hook_install(void* target, void* replacement, int stealth) {
         return NULL;
     }
 
-    /* Save original bytes */
-    memcpy(entry->original_bytes, target, MIN_HOOK_SIZE);
+    /* Save original bytes — use XOM-safe read (bypasses hardware execute-only
+     * pages on Android 10+ where VMA says r-xp but PTEs have read bit cleared).
+     * Passing original_bytes to the relocator avoids re-reading the XOM page. */
+    if (read_target_safe(target, entry->original_bytes, MIN_HOOK_SIZE) != 0) {
+        /* All safe methods failed — last resort direct read (may SIGSEGV on XOM) */
+        memcpy(entry->original_bytes, target, MIN_HOOK_SIZE);
+    }
     entry->original_size = MIN_HOOK_SIZE;
 
-    /* Relocate original instructions to trampoline */
-    size_t relocated_size = hook_relocate_instructions(target, entry->trampoline, MIN_HOOK_SIZE);
+    /* Relocate original instructions to trampoline.
+     * Pass the pre-read buffer + real src_pc so the relocator never reads
+     * directly from the (possibly XOM) target page. */
+    size_t relocated_size = hook_relocate_instructions(
+        entry->original_bytes, (uint64_t)target, entry->trampoline, MIN_HOOK_SIZE);
 
     /* Write jump back to original code after the hook */
     void* jump_back_target = (uint8_t*)target + MIN_HOOK_SIZE;
@@ -376,11 +429,7 @@ void* hook_install(void* target, void* replacement, int stealth) {
             pthread_mutex_unlock(&g_engine.lock);
             return NULL;
         }
-        /* Pad remaining bytes with BRK */
-        for (int i = jump_result; i < MIN_HOOK_SIZE; i += 4) {
-            *(uint32_t*)(jump_buf + i) = 0xD4200000 | (0xFFFF << 5); /* BRK #0xFFFF */
-        }
-        if (wxshadow_patch(target, jump_buf, MIN_HOOK_SIZE) != 0) {
+        if (wxshadow_patch(target, jump_buf, jump_result) != 0) {
             free_entry(entry);
             pool_make_executable();
             pthread_mutex_unlock(&g_engine.lock);
@@ -549,21 +598,12 @@ static void* generate_attach_thunk(HookEntry* entry, HookCallback on_enter,
 
 /* Install a Frida-style hook with callbacks */
 int hook_attach(void* target, HookCallback on_enter, HookCallback on_leave, void* user_data, int stealth) {
-    if (!g_engine.initialized) {
-        return HOOK_ERROR_NOT_INITIALIZED;
-    }
-
-    if (!target) {
-        return HOOK_ERROR_INVALID_PARAM;
-    }
-
-    if (!on_enter && !on_leave) {
-        return HOOK_ERROR_INVALID_PARAM; /* At least one callback required */
-    }
+    if (!g_engine.initialized) return HOOK_ERROR_NOT_INITIALIZED;
+    if (!target) return HOOK_ERROR_INVALID_PARAM;
+    if (!on_enter && !on_leave) return HOOK_ERROR_INVALID_PARAM;
 
     pthread_mutex_lock(&g_engine.lock);
 
-    /* Check if already hooked */
     if (find_hook(target)) {
         pthread_mutex_unlock(&g_engine.lock);
         return HOOK_ERROR_ALREADY_HOOKED;
@@ -571,6 +611,7 @@ int hook_attach(void* target, HookCallback on_enter, HookCallback on_leave, void
 
     /* Make pool writable for allocation and code generation */
     if (pool_make_writable() != 0) {
+        hook_log("hook_attach: pool_make_writable failed");
         pthread_mutex_unlock(&g_engine.lock);
         return HOOK_ERROR_MPROTECT_FAILED;
     }
@@ -588,8 +629,11 @@ int hook_attach(void* target, HookCallback on_enter, HookCallback on_leave, void
     entry->on_leave = on_leave;
     entry->user_data = user_data;
 
-    /* Save original bytes */
-    memcpy(entry->original_bytes, target, MIN_HOOK_SIZE);
+    /* Save original bytes — use XOM-safe read (bypasses hardware execute-only
+     * pages on Android 10+ where VMA says r-xp but PTEs have read bit cleared). */
+    if (read_target_safe(target, entry->original_bytes, MIN_HOOK_SIZE) != 0) {
+        memcpy(entry->original_bytes, target, MIN_HOOK_SIZE);
+    }
     entry->original_size = MIN_HOOK_SIZE;
 
     /* Allocate trampoline (reuse if available and large enough) */
@@ -604,8 +648,11 @@ int hook_attach(void* target, HookCallback on_enter, HookCallback on_leave, void
         return HOOK_ERROR_ALLOC_FAILED;
     }
 
-    /* Relocate original instructions to trampoline */
-    size_t relocated_size = hook_relocate_instructions(target, entry->trampoline, MIN_HOOK_SIZE);
+    /* Relocate original instructions to trampoline.
+     * Pass the pre-read buffer + real src_pc so the relocator never reads
+     * directly from the (possibly XOM) target page. */
+    size_t relocated_size = hook_relocate_instructions(
+        entry->original_bytes, (uint64_t)target, entry->trampoline, MIN_HOOK_SIZE);
 
     /* Write jump back to original code after the hook */
     void* jump_back_target = (uint8_t*)target + MIN_HOOK_SIZE;
@@ -628,10 +675,8 @@ int hook_attach(void* target, HookCallback on_enter, HookCallback on_leave, void
     }
 
     /* Install hook on target. Pool is still writable (RWX) here.
-     * entry->stealth (pool+0x50) and entry->next (pool+0x70) are in the pool
-     * and MUST be written before pool_make_executable() removes write permission.
-     * Moving pool_make_executable() to after all pool writes fixes the SIGSEGV
-     * that occurred when entry->stealth was written to a R-X pool. */
+     * entry->stealth and entry->next are in the pool and MUST be written
+     * before pool_make_executable() removes write permission. */
     if (stealth) {
         /* Stealth mode: write jump to temp buffer, patch via wxshadow */
         uint8_t jump_buf[MIN_HOOK_SIZE];
@@ -642,10 +687,7 @@ int hook_attach(void* target, HookCallback on_enter, HookCallback on_leave, void
             pthread_mutex_unlock(&g_engine.lock);
             return jump_result;
         }
-        for (int i = jump_result; i < MIN_HOOK_SIZE; i += 4) {
-            *(uint32_t*)(jump_buf + i) = 0xD4200000 | (0xFFFF << 5); /* BRK #0xFFFF */
-        }
-        if (wxshadow_patch(target, jump_buf, MIN_HOOK_SIZE) != 0) {
+        if (wxshadow_patch(target, jump_buf, jump_result) != 0) {
             free_entry(entry);
             pool_make_executable();
             pthread_mutex_unlock(&g_engine.lock);
@@ -674,8 +716,17 @@ int hook_attach(void* target, HookCallback on_enter, HookCallback on_leave, void
         restore_page_rx(page_start);
     }
 
-    /* Flush caches */
-    hook_flush_cache(target, MIN_HOOK_SIZE);
+    /* Flush caches.
+     * Non-stealth: we wrote jump bytes directly to target (mprotect'd to RWX),
+     *   so both dcache clean and icache invalidate are needed on the target page.
+     * Stealth (wxshadow): the kernel patches via shadow page and handles cache
+     *   coherency internally.  Do NOT flush the (XOM) target address — on some
+     *   Android kernels __builtin___clear_cache triggers a fault on XOM pages
+     *   even though dc/ic instructions normally don't require read permission. */
+    if (!entry->stealth) {
+        hook_flush_cache(target, MIN_HOOK_SIZE);
+    }
+    /* Stealth: wxshadow kernel handles icache coherency for the target page */
     hook_flush_cache(entry->trampoline, TRAMPOLINE_ALLOC_SIZE);
     hook_flush_cache(thunk_mem, thunk_size);
 
@@ -709,7 +760,7 @@ int hook_remove(void* target) {
         if (entry->target == target) {
             if (entry->stealth) {
                 /* Stealth hook: release shadow pages to restore original view */
-                int rc = wxshadow_release(target, entry->original_size);
+                int rc = wxshadow_release(target);
                 if (rc != 0) {
                     pthread_mutex_unlock(&g_engine.lock);
                     return HOOK_ERROR_WXSHADOW_FAILED;
@@ -779,7 +830,7 @@ void hook_engine_cleanup(void) {
     HookEntry* entry = g_engine.hooks;
     while (entry) {
         if (entry->stealth) {
-            wxshadow_release(entry->target, entry->original_size);
+            wxshadow_release(entry->target);
         } else {
             uintptr_t page_start = (uintptr_t)entry->target & ~0xFFF;
             mprotect((void*)page_start, 0x2000, PROT_READ | PROT_WRITE | PROT_EXEC);

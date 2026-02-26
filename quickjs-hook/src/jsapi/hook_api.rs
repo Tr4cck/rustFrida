@@ -114,9 +114,20 @@ unsafe extern "C" fn hook_callback_wrapper(
     // Serialize concurrent JS_Call invocations from multiple hooked threads.
     // QuickJS is not thread-safe; without this lock, two threads hitting the same
     // hook simultaneously would corrupt the runtime state.
-    // NOTE: If a hooked function is called from within a JS evaluation on the same
-    // thread (e.g. via callNative), this will deadlock. That usage is unsupported.
-    let _js_guard = crate::JS_ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+    //
+    // Use try_lock() to prevent same-thread deadlock: if the hooked function is
+    // called from within load_script() (which already holds JS_ENGINE), a blocking
+    // lock() would deadlock because std::sync::Mutex is not reentrant. try_lock()
+    // returns WouldBlock in that case and we skip the callback safely.
+    let _js_guard = match crate::JS_ENGINE.try_lock() {
+        Ok(g) => g,
+        Err(std::sync::TryLockError::WouldBlock) => {
+            // Same thread already holds JS_ENGINE (re-entrant call) or another
+            // thread is mid-callback. Skip this invocation to avoid deadlock.
+            return;
+        }
+        Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+    };
 
     let ctx = ctx_usize as *mut ffi::JSContext;
     // Reconstruct JSValue from bytes
