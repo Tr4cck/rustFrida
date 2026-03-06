@@ -174,12 +174,22 @@ static void emit_art_router_debug_counters(Arm64Writer* w) {
     arm64_writer_put_str_reg_reg_offset(w, ARM64_REG_X17, ARM64_REG_X16, 0);
 }
 
-/* Found path: load replacement into X0, load quickCode, restore d0-d7,
- * discard saved X16/X17, BR X17 to replacement.quickCode */
+/* Found path: load replacement into X0, sync declaring_class_ from original,
+ * load quickCode, restore d0-d7, discard saved X16/X17, BR X17 to replacement.quickCode.
+ *
+ * declaring_class_ sync: GC updates the original ArtMethod's declaring_class_
+ * (offset 0, 4-byte GcRoot) but our heap-allocated replacement is NOT tracked
+ * by the GC.  Copying it inline here eliminates the race window between GC
+ * moving the class object and our on_gc_sync_leave callback. */
 static void emit_art_router_found_path(Arm64Writer* w, uint64_t lbl_found,
                                         uint32_t quickcode_offset) {
     arm64_writer_put_label(w, lbl_found);
-    arm64_writer_put_ldr_reg_reg_offset(w, ARM64_REG_X0, ARM64_REG_X16, 8);
+    /* At this point: X17 = original ArtMethod* (from scan), X16 = &table[i] */
+    arm64_writer_put_ldr_reg_reg_offset(w, ARM64_REG_X0, ARM64_REG_X16, 8);   /* X0 = replacement */
+    /* Sync declaring_class_ (4 bytes at offset 0): original → replacement.
+     * X17 still holds the original ArtMethod*; W16 is free after loading replacement. */
+    arm64_writer_put_ldr_reg_reg_offset(w, ARM64_REG_W16, ARM64_REG_X17, 0);  /* W16 = original.declaring_class_ */
+    arm64_writer_put_str_reg_reg_offset(w, ARM64_REG_W16, ARM64_REG_X0, 0);   /* replacement.declaring_class_ = W16 */
     arm64_writer_put_ldr_reg_reg_offset(w, ARM64_REG_X17, ARM64_REG_X0, (int64_t)quickcode_offset);
     emit_art_router_restore_fp(w);
     arm64_writer_put_add_reg_reg_imm(w, ARM64_REG_SP, ARM64_REG_SP, 16);

@@ -463,6 +463,11 @@ unsafe extern "C" fn on_do_call_enter(
         if !should_replace_for_stack(replacement) {
             return; // 递归情况，保持 original 不替换
         }
+        // 同步 declaring_class_ (offset 0, 4B GcRoot): original → replacement
+        // GC 可能已更新 original 的 declaring_class_ 但堆分配的 replacement 未被 GC 追踪，
+        // 在路由时内联同步消除 GC 与 sync 回调之间的竞态窗口
+        let declaring_class = std::ptr::read_volatile(method as *const u32);
+        std::ptr::write_volatile(replacement as *mut u32, declaring_class);
         ctx.x[0] = replacement;
     }
 }
@@ -734,7 +739,15 @@ unsafe fn synchronize_replacement_methods() {
 ///
 /// 移除 Layer 1 (共享 stub 路由 hook) 和 Layer 2 (DoCall hook)。
 /// 调用路径: cleanup_java_hooks() → cleanup_art_controller()
+/// 幂等保护: cleanup_art_controller 只执行一次
+static ART_CONTROLLER_CLEANED: AtomicBool = AtomicBool::new(false);
+
 pub(super) fn cleanup_art_controller() {
+    // 幂等: JSEngine::Drop 和 cleanup_java_hooks 都可能调用此函数
+    if ART_CONTROLLER_CLEANED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
     // 恢复 instrumentation 状态 (在移除 hooks 之前)
     unsafe { restore_forced_interpret_only(); }
 

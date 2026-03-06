@@ -307,6 +307,11 @@ unsafe extern "C" fn js_call_original(
     let cls = class_global_ref as *mut std::ffi::c_void;
     let this_obj = hook_ctx.x[1] as *mut std::ffi::c_void;
 
+    // 同步 clone 的 declaring_class_ (offset 0, 4B GcRoot): original → clone
+    // clone 是堆分配的，不在 GC 根集中，GC 移动 declaring class 后 clone 的值可能过期
+    let declaring_class = std::ptr::read_volatile(art_method_addr as *const u32);
+    std::ptr::write_volatile(clone_addr as *mut u32, declaring_class);
+
     // Clear any pending exception before calling original
     jni_check_exc(env);
 
