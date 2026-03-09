@@ -18,14 +18,18 @@
 
 use crate::ffi::hook as hook_ffi;
 use crate::jsapi::console::output_message;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
-use super::art_method::{ArtBridgeFunctions, ART_BRIDGE_FUNCTIONS, try_invalidate_jit_cache,
-                         read_entry_point, get_instrumentation_spec};
-use super::art_thread::{get_art_thread_spec, get_managed_stack_spec, ArtThreadSpec, ART_THREAD_SPEC};
+use super::art_method::{
+    get_instrumentation_spec, read_entry_point, try_invalidate_jit_cache, ArtBridgeFunctions,
+    ART_BRIDGE_FUNCTIONS,
+};
+use super::art_thread::{
+    get_art_thread_spec, get_managed_stack_spec, ArtThreadSpec, ART_THREAD_SPEC,
+};
 use super::callback::{get_replacement_method, is_replacement_method};
-use super::jni_core::{JniEnv, get_runtime_addr};
+use super::jni_core::{get_runtime_addr, JniEnv};
 use super::PAC_STRIP_MASK;
 
 // ============================================================================
@@ -39,7 +43,10 @@ static STEALTH_ENABLED: AtomicBool = AtomicBool::new(false);
 /// 设置 stealth 开关
 pub(super) fn set_stealth_enabled(enabled: bool) {
     STEALTH_ENABLED.store(enabled, Ordering::Relaxed);
-    output_message(&format!("[wxshadow] stealth 模式: {}", if enabled { "已启用" } else { "已禁用" }));
+    output_message(&format!(
+        "[wxshadow] stealth 模式: {}",
+        if enabled { "已启用" } else { "已禁用" }
+    ));
 }
 
 /// 查询 stealth 开关状态
@@ -68,7 +75,9 @@ unsafe fn set_forced_interpret_only() {
     let spec = match get_instrumentation_spec() {
         Some(s) => s,
         None => {
-            output_message("[instrumentation] InstrumentationSpec 不可用，跳过 forced_interpret_only");
+            output_message(
+                "[instrumentation] InstrumentationSpec 不可用，跳过 forced_interpret_only",
+            );
             return;
         }
     };
@@ -132,7 +141,9 @@ unsafe fn restore_forced_interpret_only() {
     let instrumentation_base = if spec.is_pointer_mode {
         let ptr = *((runtime as usize + spec.runtime_instrumentation_offset) as *const u64);
         let stripped = ptr & PAC_STRIP_MASK;
-        if stripped == 0 { return; }
+        if stripped == 0 {
+            return;
+        }
         stripped as usize
     } else {
         runtime as usize + spec.runtime_instrumentation_offset
@@ -180,7 +191,11 @@ static ART_CONTROLLER: OnceLock<ArtControllerState> = OnceLock::new();
 ///
 /// Layer 1: 对 3 个共享 stub 安装 hook_install_art_router，路由 hook 方法到 replacement
 /// Layer 2: 对 DoCall 安装 hook_attach，拦截解释器路径
-pub(super) fn ensure_art_controller_initialized(bridge: &ArtBridgeFunctions, ep_offset: usize, env: *mut std::ffi::c_void) {
+pub(super) fn ensure_art_controller_initialized(
+    bridge: &ArtBridgeFunctions,
+    ep_offset: usize,
+    env: *mut std::ffi::c_void,
+) {
     ART_CONTROLLER.get_or_init(|| {
         output_message("[artController] 开始安装三层拦截矩阵...");
 
@@ -522,9 +537,8 @@ unsafe fn should_replace_for_stack(replacement: u64) -> bool {
     let managed_stack = thread as usize + thread_spec.managed_stack_offset;
 
     // 读取 top_quick_frame
-    let top_qf = std::ptr::read_volatile(
-        (managed_stack + ms_spec.top_quick_frame_offset) as *const u64,
-    );
+    let top_qf =
+        std::ptr::read_volatile((managed_stack + ms_spec.top_quick_frame_offset) as *const u64);
 
     if top_qf != 0 {
         // top_quick_frame != NULL → 正常调用 (有 compiled frame)，执行替换
@@ -533,18 +547,15 @@ unsafe fn should_replace_for_stack(replacement: u64) -> bool {
 
     // top_quick_frame == NULL → 可能是从解释器进入的
     // 读取 link_ (上一个 ManagedStack)
-    let link = std::ptr::read_volatile(
-        (managed_stack + ms_spec.link_offset) as *const u64,
-    );
+    let link = std::ptr::read_volatile((managed_stack + ms_spec.link_offset) as *const u64);
     let link = link & PAC_STRIP_MASK;
     if link == 0 {
         return true;
     }
 
     // 读取 link.top_quick_frame (可能有 TaggedQuickFrame 的 tag bit)
-    let link_tqf = std::ptr::read_volatile(
-        (link as usize + ms_spec.top_quick_frame_offset) as *const u64,
-    );
+    let link_tqf =
+        std::ptr::read_volatile((link as usize + ms_spec.top_quick_frame_offset) as *const u64);
     // Strip tag bit (bit 0): ART uses it as a tag for managed/JNI frames
     let frame_ptr = (link_tqf & !1u64) & PAC_STRIP_MASK;
     if frame_ptr == 0 {
@@ -646,9 +657,10 @@ unsafe extern "C" fn on_get_oat_quick_method_header(
 /// 3. entry_point 验证与恢复 (Fix 2 + existing)
 unsafe fn synchronize_replacement_methods() {
     use super::art_method::ART_BRIDGE_FUNCTIONS;
-    use super::callback::{JAVA_HOOK_REGISTRY, HookType};
-    use super::jni_core::{ART_METHOD_SPEC, k_acc_compile_dont_bother,
-                          K_ACC_FAST_INTERP_TO_INTERP};
+    use super::callback::{HookType, JAVA_HOOK_REGISTRY};
+    use super::jni_core::{
+        k_acc_compile_dont_bother, ART_METHOD_SPEC, K_ACC_FAST_INTERP_TO_INTERP,
+    };
 
     let guard = match JAVA_HOOK_REGISTRY.lock() {
         Ok(g) => g,
@@ -677,7 +689,9 @@ unsafe fn synchronize_replacement_methods() {
         // --- Fix 1: declaring_class_ 同步 ---
         // 移动 GC 会更新原始 ArtMethod 的 declaring_class_ (offset 0, 4 bytes GcRoot)，
         // 但堆分配的 replacement 和 clone 不会被 GC 追踪。同步以防悬空引用。
-        let HookType::Replaced { replacement_addr, .. } = &data.hook_type;
+        let HookType::Replaced {
+            replacement_addr, ..
+        } = &data.hook_type;
         {
             let declaring_class = std::ptr::read_volatile(art_method as *const u32);
             std::ptr::write_volatile(*replacement_addr as *mut u32, declaring_class);
@@ -689,22 +703,20 @@ unsafe fn synchronize_replacement_methods() {
 
         // --- flags 修复: 确保 kAccCompileDontBother 在 + kAccFastInterpreterToInterpreterInvoke 不在 ---
         let cdontbother = k_acc_compile_dont_bother();
-        let flags = std::ptr::read_volatile(
-            (art_method + spec.access_flags_offset) as *const u32,
-        );
+        let flags = std::ptr::read_volatile((art_method + spec.access_flags_offset) as *const u32);
         let need_fix = (cdontbother != 0 && (flags & cdontbother) == 0)
             || (flags & K_ACC_FAST_INTERP_TO_INTERP) != 0;
         if need_fix {
             let fixed = (flags | cdontbother) & !K_ACC_FAST_INTERP_TO_INTERP;
-            std::ptr::write_volatile(
-                (art_method + spec.access_flags_offset) as *mut u32,
-                fixed,
-            );
+            std::ptr::write_volatile((art_method + spec.access_flags_offset) as *mut u32, fixed);
         }
 
         // --- Fix 2 + existing: entry_point 验证与恢复 ---
         match &data.hook_type {
-            HookType::Replaced { per_method_hook_target: None, .. } => {
+            HookType::Replaced {
+                per_method_hook_target: None,
+                ..
+            } => {
                 // 共享 stub 方法: 如果 GC 重置 entry_point 为 nterp，再降级为 interpreter_bridge
                 if nterp != 0 && interp_bridge != 0 {
                     let current_ep = read_entry_point(data.art_method, ep_offset);
@@ -720,7 +732,10 @@ unsafe fn synchronize_replacement_methods() {
                     }
                 }
             }
-            HookType::Replaced { per_method_hook_target: Some(_), .. } => {
+            HookType::Replaced {
+                per_method_hook_target: Some(_),
+                ..
+            } => {
                 // 编译方法: entry_point 应为 original_entry_point (已被 inline hook 修改)
                 let current_ep = read_entry_point(data.art_method, ep_offset);
                 if current_ep != data.original_entry_point {
@@ -757,7 +772,9 @@ pub(super) fn cleanup_art_controller() {
     }
 
     // 恢复 instrumentation 状态 (在移除 hooks 之前)
-    unsafe { restore_forced_interpret_only(); }
+    unsafe {
+        restore_forced_interpret_only();
+    }
 
     let state = match ART_CONTROLLER.get() {
         Some(s) => s,

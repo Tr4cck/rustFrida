@@ -4,15 +4,15 @@
 //! ArtBridgeFunctions, CachedFieldInfo, FIELD_CACHE, cache_fields_for_class.
 
 use crate::jsapi::console::output_message;
-use crate::jsapi::module::{libart_dlsym, dlsym_first_match, is_in_libart};
+use crate::jsapi::module::{dlsym_first_match, is_in_libart, libart_dlsym};
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::sync::{Mutex, OnceLock};
 
-use super::PAC_STRIP_MASK;
 use super::jni_core::*;
 use super::reflect::*;
 use super::safe_mem::{refresh_mem_regions, safe_read_u64};
+use super::PAC_STRIP_MASK;
 
 // ============================================================================
 // 共享 Runtime 布局辅助函数
@@ -61,16 +61,24 @@ static ART_FIELD_SPEC: OnceLock<Option<ArtFieldSpec>> = OnceLock::new();
 /// API 21-22 (Android 5.x): size=24, access_flags_offset=12
 /// API < 21: 不支持
 pub(super) fn get_art_field_spec() -> Option<&'static ArtFieldSpec> {
-    ART_FIELD_SPEC.get_or_init(|| {
-        let api_level = get_android_api_level();
-        if api_level >= 23 {
-            Some(ArtFieldSpec { size: 16, access_flags_offset: 4 })
-        } else if api_level >= 21 {
-            Some(ArtFieldSpec { size: 24, access_flags_offset: 12 })
-        } else {
-            None
-        }
-    }).as_ref()
+    ART_FIELD_SPEC
+        .get_or_init(|| {
+            let api_level = get_android_api_level();
+            if api_level >= 23 {
+                Some(ArtFieldSpec {
+                    size: 16,
+                    access_flags_offset: 4,
+                })
+            } else if api_level >= 21 {
+                Some(ArtFieldSpec {
+                    size: 24,
+                    access_flags_offset: 12,
+                })
+            } else {
+                None
+            }
+        })
+        .as_ref()
 }
 
 // ============================================================================
@@ -118,7 +126,8 @@ unsafe impl Send for ArtBridgeFunctions {}
 unsafe impl Sync for ArtBridgeFunctions {}
 
 /// 全局缓存的 ART bridge 函数地址
-pub(super) static ART_BRIDGE_FUNCTIONS: std::sync::OnceLock<ArtBridgeFunctions> = std::sync::OnceLock::new();
+pub(super) static ART_BRIDGE_FUNCTIONS: std::sync::OnceLock<ArtBridgeFunctions> =
+    std::sync::OnceLock::new();
 
 /// 从 trampoline 地址解析真实的 quick entrypoint。
 ///
@@ -173,7 +182,10 @@ unsafe fn resolve_quick_entrypoint_from_trampoline(trampoline: u64, env: JniEnv)
 ///    quick_to_interpreter_bridge、quick_resolution_trampoline
 /// 2. dlsym: GetNterpEntryPoint（调用它获取 nterp 入口）、DoCall 模板实例、
 ///    ConcurrentCopying::CopyingPhase
-pub(super) unsafe fn find_art_bridge_functions(env: JniEnv, _ep_offset: usize) -> &'static ArtBridgeFunctions {
+pub(super) unsafe fn find_art_bridge_functions(
+    env: JniEnv,
+    _ep_offset: usize,
+) -> &'static ArtBridgeFunctions {
     ART_BRIDGE_FUNCTIONS.get_or_init(|| {
         output_message("[art bridge] 开始发现 ART 内部桥接函数...");
 
@@ -279,7 +291,12 @@ unsafe fn find_classlinker_trampolines(_env: JniEnv) -> (u64, u64, u64, u64) {
 
     if !jni_sym.is_null() && !interp_sym.is_null() && !resolution_sym.is_null() {
         output_message("[art bridge] 全部通过 dlsym 发现");
-        return (jni_sym as u64, interp_sym as u64, resolution_sym as u64, imt_sym as u64);
+        return (
+            jni_sym as u64,
+            interp_sym as u64,
+            resolution_sym as u64,
+            imt_sym as u64,
+        );
     }
 
     // --- Strategy 2: ClassLinker 扫描 (主要策略) ---
@@ -291,17 +308,26 @@ unsafe fn find_classlinker_trampolines(_env: JniEnv) -> (u64, u64, u64, u64) {
         Some(v) => v,
         None => {
             output_message("[art bridge] ClassLinker 扫描: 无法获取 Runtime/java_vm_ 偏移");
-            return (jni_sym as u64, interp_sym as u64, resolution_sym as u64, imt_sym as u64);
+            return (
+                jni_sym as u64,
+                interp_sym as u64,
+                resolution_sym as u64,
+                imt_sym as u64,
+            );
         }
     };
 
     output_message(&format!(
-        "[art bridge] Runtime={:#x}, java_vm_ 在 Runtime+{:#x}", runtime, java_vm_off
+        "[art bridge] Runtime={:#x}, java_vm_ 在 Runtime+{:#x}",
+        runtime, java_vm_off
     ));
 
     let api_level = get_android_api_level();
     let codename = get_android_codename();
-    output_message(&format!("[art bridge] Android API level: {}, codename: '{}'", api_level, codename));
+    output_message(&format!(
+        "[art bridge] Android API level: {}, codename: '{}'",
+        api_level, codename
+    ));
 
     let class_linker_candidates = compute_classlinker_candidates(java_vm_off);
 
@@ -335,7 +361,8 @@ unsafe fn find_classlinker_trampolines(_env: JniEnv) -> (u64, u64, u64, u64) {
             if val_stripped == intern_table {
                 intern_table_cl_offset = Some(offset);
                 output_message(&format!(
-                    "[art bridge] 找到 intern_table_ 在 ClassLinker+{:#x}", offset
+                    "[art bridge] 找到 intern_table_ 在 ClassLinker+{:#x}",
+                    offset
                 ));
                 break;
             }
@@ -376,7 +403,8 @@ unsafe fn find_classlinker_trampolines(_env: JniEnv) -> (u64, u64, u64, u64) {
 
         let jni_tramp = safe_read_u64(class_linker + jni_tramp_off as u64) & PAC_STRIP_MASK;
         let interp_bridge = safe_read_u64(class_linker + interp_bridge_off as u64) & PAC_STRIP_MASK;
-        let resolution_tramp = safe_read_u64(class_linker + resolution_tramp_off as u64) & PAC_STRIP_MASK;
+        let resolution_tramp =
+            safe_read_u64(class_linker + resolution_tramp_off as u64) & PAC_STRIP_MASK;
         let imt_conflict = safe_read_u64(class_linker + imt_conflict_off as u64) & PAC_STRIP_MASK;
 
         output_message(&format!(
@@ -387,7 +415,11 @@ unsafe fn find_classlinker_trampolines(_env: JniEnv) -> (u64, u64, u64, u64) {
         // 验证: 应为 libart.so 中的代码指针
         if jni_tramp != 0 && is_code_pointer(jni_tramp) {
             // 对可能通过 dlsym 找到的地址使用 dlsym 值，否则用 ClassLinker 值
-            let final_jni = if jni_sym.is_null() { jni_tramp } else { jni_sym as u64 };
+            let final_jni = if jni_sym.is_null() {
+                jni_tramp
+            } else {
+                jni_sym as u64
+            };
             let final_interp = if interp_bridge != 0 && is_code_pointer(interp_bridge) {
                 interp_bridge
             } else if !interp_sym.is_null() {
@@ -415,7 +447,12 @@ unsafe fn find_classlinker_trampolines(_env: JniEnv) -> (u64, u64, u64, u64) {
     }
 
     output_message("[art bridge] ClassLinker 扫描失败，返回 dlsym 结果（部分可能为0）");
-    (jni_sym as u64, interp_sym as u64, resolution_sym as u64, imt_sym as u64)
+    (
+        jni_sym as u64,
+        interp_sym as u64,
+        resolution_sym as u64,
+        imt_sym as u64,
+    )
 }
 
 /// 查找 Nterp 解释器入口点（Android 12+ / API 31+）
@@ -431,7 +468,8 @@ unsafe fn find_nterp_entry_point() -> u64 {
         let ep = get_nterp();
         if ep != 0 {
             output_message(&format!(
-                "[art bridge] Nterp 入口点通过 GetNterpEntryPoint() 获取: {:#x}", ep
+                "[art bridge] Nterp 入口点通过 GetNterpEntryPoint() 获取: {:#x}",
+                ep
             ));
             return ep;
         }
@@ -441,7 +479,8 @@ unsafe fn find_nterp_entry_point() -> u64 {
     let func_ptr2 = libart_dlsym("ExecuteNterpImpl");
     if !func_ptr2.is_null() {
         output_message(&format!(
-            "[art bridge] Nterp 入口点通过 ExecuteNterpImpl 获取: {:#x}", func_ptr2 as u64
+            "[art bridge] Nterp 入口点通过 ExecuteNterpImpl 获取: {:#x}",
+            func_ptr2 as u64
         ));
         return func_ptr2 as u64;
     }
@@ -537,7 +576,11 @@ pub(super) unsafe fn try_invalidate_jit_cache() {
     let runtime_addr = if !instance_ptr.is_null() {
         let rt = *(instance_ptr as *const u64);
         let rt_stripped = rt & PAC_STRIP_MASK;
-        if rt_stripped != 0 { rt_stripped } else { runtime }
+        if rt_stripped != 0 {
+            rt_stripped
+        } else {
+            runtime
+        }
     } else {
         runtime
     };
@@ -556,9 +599,7 @@ pub(super) unsafe fn try_invalidate_jit_cache() {
     // 实际上最简单的方案: 扫描 Runtime 寻找指向合法 JitCodeCache 的指针
 
     // 使用 Jit::GetCodeCache() 如果可用
-    let get_code_cache_ptr = crate::jsapi::module::libart_dlsym(
-        "_ZNK3art3jit3Jit12GetCodeCacheEv"
-    );
+    let get_code_cache_ptr = crate::jsapi::module::libart_dlsym("_ZNK3art3jit3Jit12GetCodeCacheEv");
 
     if !get_code_cache_ptr.is_null() {
         // 需要 Jit* this — 从 Runtime 获取
@@ -749,8 +790,10 @@ pub(super) fn is_art_quick_entrypoint(addr: u64, bridge: &ArtBridgeFunctions) ->
     }
     // Thread TLS 中的真实 entrypoint 比较（trampoline 解析结果，0 表示无效跳过）
     if (bridge.resolved_jni_entrypoint != 0 && addr == bridge.resolved_jni_entrypoint)
-        || (bridge.resolved_interpreter_bridge_entrypoint != 0 && addr == bridge.resolved_interpreter_bridge_entrypoint)
-        || (bridge.resolved_resolution_entrypoint != 0 && addr == bridge.resolved_resolution_entrypoint)
+        || (bridge.resolved_interpreter_bridge_entrypoint != 0
+            && addr == bridge.resolved_interpreter_bridge_entrypoint)
+        || (bridge.resolved_resolution_entrypoint != 0
+            && addr == bridge.resolved_resolution_entrypoint)
     {
         return true;
     }
@@ -784,7 +827,8 @@ pub(super) fn resolve_art_method(
             return Err(format!("FindClass('{}') failed", class_name));
         }
 
-        let delete_local_ref: DeleteLocalRefFn = jni_fn!(env, DeleteLocalRefFn, JNI_DELETE_LOCAL_REF);
+        let delete_local_ref: DeleteLocalRefFn =
+            jni_fn!(env, DeleteLocalRefFn, JNI_DELETE_LOCAL_REF);
 
         // Try GetMethodID (instance method first), unless force_static
         if !force_static {
@@ -808,7 +852,8 @@ pub(super) fn resolve_art_method(
         }
 
         // Try GetStaticMethodID
-        let get_static_method_id: GetStaticMethodIdFn = jni_fn!(env, GetStaticMethodIdFn, JNI_GET_STATIC_METHOD_ID);
+        let get_static_method_id: GetStaticMethodIdFn =
+            jni_fn!(env, GetStaticMethodIdFn, JNI_GET_STATIC_METHOD_ID);
 
         let method_id = get_static_method_id(env, cls, c_method.as_ptr(), c_sig.as_ptr());
 
@@ -856,10 +901,7 @@ pub(super) static FIELD_CACHE: Mutex<Option<HashMap<String, HashMap<String, Cach
 
 /// Enumerate and cache all fields (instance + static) for a class (including inherited).
 /// Must be called from a safe thread (not a hook callback).
-pub(super) unsafe fn cache_fields_for_class(
-    env: JniEnv,
-    class_name: &str,
-) {
+pub(super) unsafe fn cache_fields_for_class(env: JniEnv, class_name: &str) {
     // Initialize cache if needed
     {
         let mut guard = FIELD_CACHE.lock().unwrap_or_else(|e| e.into_inner());
@@ -880,7 +922,8 @@ pub(super) unsafe fn cache_fields_for_class(
 
     // Resolve field IDs and store in cache
     let get_field_id: GetFieldIdFn = jni_fn!(env, GetFieldIdFn, JNI_GET_FIELD_ID);
-    let get_static_field_id: GetStaticFieldIdFn = jni_fn!(env, GetStaticFieldIdFn, JNI_GET_STATIC_FIELD_ID);
+    let get_static_field_id: GetStaticFieldIdFn =
+        jni_fn!(env, GetStaticFieldIdFn, JNI_GET_STATIC_FIELD_ID);
     let delete_local_ref: DeleteLocalRefFn = jni_fn!(env, DeleteLocalRefFn, JNI_DELETE_LOCAL_REF);
 
     let cls = find_class_safe(env, class_name);
@@ -944,7 +987,8 @@ unsafe fn enumerate_class_fields(
     let call_obj: CallObjectMethodAFn = jni_fn!(env, CallObjectMethodAFn, JNI_CALL_OBJECT_METHOD_A);
     let call_int: CallIntMethodAFn = jni_fn!(env, CallIntMethodAFn, JNI_CALL_INT_METHOD_A);
     let get_str: GetStringUtfCharsFn = jni_fn!(env, GetStringUtfCharsFn, JNI_GET_STRING_UTF_CHARS);
-    let rel_str: ReleaseStringUtfCharsFn = jni_fn!(env, ReleaseStringUtfCharsFn, JNI_RELEASE_STRING_UTF_CHARS);
+    let rel_str: ReleaseStringUtfCharsFn =
+        jni_fn!(env, ReleaseStringUtfCharsFn, JNI_RELEASE_STRING_UTF_CHARS);
     let get_arr_len: GetArrayLengthFn = jni_fn!(env, GetArrayLengthFn, JNI_GET_ARRAY_LENGTH);
     let get_arr_elem: GetObjectArrayElementFn =
         jni_fn!(env, GetObjectArrayElementFn, JNI_GET_OBJECT_ARRAY_ELEMENT);
@@ -977,8 +1021,18 @@ unsafe fn enumerate_class_fields(
     let c_get_mods = CString::new("getModifiers").unwrap();
     let c_get_mods_sig = CString::new("()I").unwrap();
 
-    let get_fields_mid = get_mid(env, class_cls, c_get_fields.as_ptr(), c_get_fields_sig.as_ptr());
-    let get_declared_fields_mid = get_mid(env, class_cls, c_get_declared_fields.as_ptr(), c_get_fields_sig.as_ptr());
+    let get_fields_mid = get_mid(
+        env,
+        class_cls,
+        c_get_fields.as_ptr(),
+        c_get_fields_sig.as_ptr(),
+    );
+    let get_declared_fields_mid = get_mid(
+        env,
+        class_cls,
+        c_get_declared_fields.as_ptr(),
+        c_get_fields_sig.as_ptr(),
+    );
     let field_get_name_mid = get_mid(env, field_cls, c_get_name.as_ptr(), c_str_sig.as_ptr());
     let field_get_type_mid = get_mid(env, field_cls, c_get_type.as_ptr(), c_get_type_sig.as_ptr());
     let field_get_mods_mid = get_mid(env, field_cls, c_get_mods.as_ptr(), c_get_mods_sig.as_ptr());
@@ -990,20 +1044,28 @@ unsafe fn enumerate_class_fields(
 
     // Helper: extract fields from a Field[] array
     let mut extract_fields = |arr: *mut std::ffi::c_void| {
-        if arr.is_null() { return; }
+        if arr.is_null() {
+            return;
+        }
         let len = get_arr_len(env, arr);
         for i in 0..len {
             let field = get_arr_elem(env, arr, i);
-            if field.is_null() { continue; }
+            if field.is_null() {
+                continue;
+            }
 
             // getName()
             let name_jstr = call_obj(env, field, field_get_name_mid, std::ptr::null());
-            if name_jstr.is_null() { continue; }
+            if name_jstr.is_null() {
+                continue;
+            }
             let name_chars = get_str(env, name_jstr, std::ptr::null_mut());
             let name = CStr::from_ptr(name_chars).to_string_lossy().to_string();
             rel_str(env, name_jstr, name_chars);
 
-            if seen.contains(&name) { continue; }
+            if seen.contains(&name) {
+                continue;
+            }
 
             // getModifiers() — check for static (0x0008)
             let modifiers = if !field_get_mods_mid.is_null() {
@@ -1015,9 +1077,18 @@ unsafe fn enumerate_class_fields(
 
             // getType().getName()
             let type_cls_obj = call_obj(env, field, field_get_type_mid, std::ptr::null());
-            if type_cls_obj.is_null() { continue; }
-            let type_name_jstr = call_obj(env, type_cls_obj, reflect.class_get_name_mid, std::ptr::null());
-            if type_name_jstr.is_null() { continue; }
+            if type_cls_obj.is_null() {
+                continue;
+            }
+            let type_name_jstr = call_obj(
+                env,
+                type_cls_obj,
+                reflect.class_get_name_mid,
+                std::ptr::null(),
+            );
+            if type_name_jstr.is_null() {
+                continue;
+            }
             let tc = get_str(env, type_name_jstr, std::ptr::null_mut());
             let type_name = CStr::from_ptr(tc).to_string_lossy().to_string();
             rel_str(env, type_name_jstr, tc);
@@ -1033,25 +1104,35 @@ unsafe fn enumerate_class_fields(
         let c_get_superclass = CString::new("getSuperclass").unwrap();
         let c_get_superclass_sig = CString::new("()Ljava/lang/Class;").unwrap();
         let get_superclass_mid = get_mid(
-            env, class_cls,
-            c_get_superclass.as_ptr(), c_get_superclass_sig.as_ptr(),
+            env,
+            class_cls,
+            c_get_superclass.as_ptr(),
+            c_get_superclass_sig.as_ptr(),
         );
 
         let mut current_cls = cls;
         loop {
-            if current_cls.is_null() { break; }
+            if current_cls.is_null() {
+                break;
+            }
 
             // getDeclaredFields() on current class
             if !get_declared_fields_mid.is_null() {
                 let arr = call_obj(env, current_cls, get_declared_fields_mid, std::ptr::null());
-                if jni_check_exc(env) { /* skip */ }
-                else { extract_fields(arr); }
+                if jni_check_exc(env) { /* skip */
+                } else {
+                    extract_fields(arr);
+                }
             }
 
             // Walk to superclass
-            if get_superclass_mid.is_null() { break; }
+            if get_superclass_mid.is_null() {
+                break;
+            }
             let super_cls = call_obj(env, current_cls, get_superclass_mid, std::ptr::null());
-            if jni_check_exc(env) || super_cls.is_null() { break; }
+            if jni_check_exc(env) || super_cls.is_null() {
+                break;
+            }
             current_cls = super_cls;
         }
     }
@@ -1059,8 +1140,10 @@ unsafe fn enumerate_class_fields(
     // getFields() — all public inherited fields (catches interface constants, etc.)
     if !get_fields_mid.is_null() {
         let arr = call_obj(env, cls, get_fields_mid, std::ptr::null());
-        if jni_check_exc(env) { /* skip */ }
-        else { extract_fields(arr); }
+        if jni_check_exc(env) { /* skip */
+        } else {
+            extract_fields(arr);
+        }
     }
 
     pop_frame(env, std::ptr::null_mut());
@@ -1088,7 +1171,9 @@ static INSTRUMENTATION_SPEC: OnceLock<Option<InstrumentationSpec>> = OnceLock::n
 
 /// 获取缓存的 Instrumentation 偏移规格（首次调用时探测）
 pub(super) fn get_instrumentation_spec() -> Option<&'static InstrumentationSpec> {
-    INSTRUMENTATION_SPEC.get_or_init(|| probe_instrumentation_spec()).as_ref()
+    INSTRUMENTATION_SPEC
+        .get_or_init(|| probe_instrumentation_spec())
+        .as_ref()
 }
 
 /// 按 API level 返回 Instrumentation.deoptimization_enabled_ 偏移 (64-bit ARM64)
@@ -1123,7 +1208,8 @@ fn get_deoptimization_enabled_offset() -> Option<usize> {
 /// 仅支持 ARM64。
 pub(super) fn probe_instrumentation_spec() -> Option<InstrumentationSpec> {
     // Step 1: dlsym 查找 art::Runtime::DeoptimizeBootImage
-    let sym = unsafe { crate::jsapi::module::libart_dlsym("_ZN3art7Runtime19DeoptimizeBootImageEv") };
+    let sym =
+        unsafe { crate::jsapi::module::libart_dlsym("_ZN3art7Runtime19DeoptimizeBootImageEv") };
     if sym.is_null() {
         output_message("[instrumentation] DeoptimizeBootImage 符号未找到");
         return None;
@@ -1136,7 +1222,9 @@ pub(super) fn probe_instrumentation_spec() -> Option<InstrumentationSpec> {
 
     output_message(&format!(
         "[instrumentation] DeoptimizeBootImage={:#x}, APEX={}, 模式={}",
-        sym as u64, apex_version, if is_pointer_mode { "指针" } else { "嵌入" }
+        sym as u64,
+        apex_version,
+        if is_pointer_mode { "指针" } else { "嵌入" }
     ));
 
     // Step 3: 扫描前 30 条 ARM64 指令（每条 4 字节）
@@ -1163,7 +1251,8 @@ pub(super) fn probe_instrumentation_spec() -> Option<InstrumentationSpec> {
 
                 if offset >= 0x100 && offset <= 0x400 {
                     output_message(&format!(
-                        "[instrumentation] 指针模式: LDR x{}, [x{}, #{}]", rt, rn, offset
+                        "[instrumentation] 指针模式: LDR x{}, [x{}, #{}]",
+                        rt, rn, offset
                     ));
                     return Some(InstrumentationSpec {
                         runtime_instrumentation_offset: offset,
@@ -1193,7 +1282,8 @@ pub(super) fn probe_instrumentation_spec() -> Option<InstrumentationSpec> {
 
                 if offset >= 0x100 && offset <= 0x400 {
                     output_message(&format!(
-                        "[instrumentation] 嵌入模式: ADD x{}, x{}, #{}", rd, rn, offset
+                        "[instrumentation] 嵌入模式: ADD x{}, x{}, #{}",
+                        rd, rn, offset
                     ));
                     return Some(InstrumentationSpec {
                         runtime_instrumentation_offset: offset,
@@ -1270,7 +1360,9 @@ static ART_RUNTIME_SPEC: OnceLock<Option<ArtRuntimeSpec>> = OnceLock::new();
 
 /// 获取缓存的 ArtRuntimeSpec（首次调用时探测）
 pub(super) fn get_art_runtime_spec() -> Option<&'static ArtRuntimeSpec> {
-    ART_RUNTIME_SPEC.get_or_init(|| unsafe { probe_art_runtime_spec() }).as_ref()
+    ART_RUNTIME_SPEC
+        .get_or_init(|| unsafe { probe_art_runtime_spec() })
+        .as_ref()
 }
 
 /// 验证 classLinker 偏移是否正确（对标 Frida tryGetArtClassLinkerSpec）
@@ -1344,12 +1436,14 @@ unsafe fn probe_art_runtime_spec() -> Option<ArtRuntimeSpec> {
         if verify_class_linker_offset(runtime, candidate, intern_table_candidate) {
             class_linker_offset = Some(candidate);
             output_message(&format!(
-                "[art runtime] classLinker 候选 Runtime+{:#x} 验证通过", candidate
+                "[art runtime] classLinker 候选 Runtime+{:#x} 验证通过",
+                candidate
             ));
             break;
         }
         output_message(&format!(
-            "[art runtime] classLinker 候选 Runtime+{:#x} 验证失败，尝试下一个", candidate
+            "[art runtime] classLinker 候选 Runtime+{:#x} 验证失败，尝试下一个",
+            candidate
         ));
     }
 
@@ -1488,7 +1582,8 @@ pub(super) fn probe_jni_ids_indirection_offset() -> Option<usize> {
                 let offset = imm12 * scale;
                 output_message(&format!(
                     "[jniIds] LDR+CMP 模式: offset={} ({}bit LDR)",
-                    offset, if prev_is_ldr64 { 64 } else { 32 }
+                    offset,
+                    if prev_is_ldr64 { 64 } else { 32 }
                 ));
                 return Some(offset);
             }
@@ -1505,7 +1600,8 @@ pub(super) fn probe_jni_ids_indirection_offset() -> Option<usize> {
                 let offset = imm12 * scale;
                 output_message(&format!(
                     "[jniIds] STR+BL 模式: offset={} ({}bit STR)",
-                    offset, if prev_is_str64 { 64 } else { 32 }
+                    offset,
+                    if prev_is_str64 { 64 } else { 32 }
                 ));
                 return Some(offset);
             }

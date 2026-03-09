@@ -28,7 +28,12 @@ pub(crate) const AGENT_SO: &[u8] =
 const EMPTY_SO: &[u8] = include_bytes!("../../loader/build/empty.so");
 
 /// 在目标进程中分配内存并写入结构体，返回远程地址。
-fn alloc_and_write_struct<T>(pid: i32, malloc_addr: usize, data: &T, name: &str) -> Result<usize, String> {
+fn alloc_and_write_struct<T>(
+    pid: i32,
+    malloc_addr: usize,
+    data: &T,
+    name: &str,
+) -> Result<usize, String> {
     let size = size_of::<T>();
     let addr = call_target_function(pid, malloc_addr, &[size], None)
         .map_err(|e| format!("分配{}内存失败: {}", name, e))?;
@@ -47,13 +52,8 @@ fn create_socketpair_in_target(pid: i32, offsets: &LibcOffsets) -> Result<(i32, 
         .map_err(|e| format!("分配 socketpair 缓冲区失败: {}", e))?;
 
     // 调用 socketpair(AF_UNIX=1, SOCK_STREAM=1, 0, sv_ptr)
-    let ret = call_target_function(
-        pid,
-        offsets.socketpair,
-        &[1, 1, 0, sv_addr],
-        None,
-    )
-    .map_err(|e| format!("调用 socketpair 失败: {}", e))?;
+    let ret = call_target_function(pid, offsets.socketpair, &[1, 1, 0, sv_addr], None)
+        .map_err(|e| format!("调用 socketpair 失败: {}", e))?;
 
     if ret as isize != 0 {
         return Err(format!("socketpair 返回错误: {}", ret as isize));
@@ -98,7 +98,12 @@ fn extract_fd_from_target(pid: i32, target_fd: i32) -> Result<RawFd, String> {
         ));
     }
 
-    log_verbose!("pidfd_getfd: pid={} target_fd={} → host_fd={}", pid, target_fd, host_fd);
+    log_verbose!(
+        "pidfd_getfd: pid={} target_fd={} → host_fd={}",
+        pid,
+        target_fd,
+        host_fd
+    );
     Ok(host_fd as RawFd)
 }
 
@@ -134,7 +139,11 @@ struct InjectionGuard {
 
 impl InjectionGuard {
     fn new(pid: i32, host_fd: RawFd) -> Self {
-        Self { pid, host_fd, disarmed: false }
+        Self {
+            pid,
+            host_fd,
+            disarmed: false,
+        }
     }
 
     /// 注入成功，取走 host_fd，不再自动清理
@@ -252,7 +261,12 @@ pub(crate) fn inject_to_process(
     match call_target_function(
         pid,
         shellcode_addr,
-        &[offsets_addr, dloffset_addr, string_table_addr, agent_args_addr],
+        &[
+            offsets_addr,
+            dloffset_addr,
+            string_table_addr,
+            agent_args_addr,
+        ],
         None,
     ) {
         Ok(return_value) => {
@@ -271,7 +285,12 @@ pub(crate) fn inject_to_process(
                     _ => "未知错误",
                 };
                 // 清理 shellcode 内存
-                let _ = call_target_function(pid, offsets.munmap, &[shellcode_addr, shellcode_len], None);
+                let _ = call_target_function(
+                    pid,
+                    offsets.munmap,
+                    &[shellcode_addr, shellcode_len],
+                    None,
+                );
                 let _ = ptrace::detach(Pid::from_raw(pid), None);
                 let fd = guard.into_fd();
                 unsafe { close(fd) };
@@ -341,7 +360,10 @@ impl DebugInjectMode {
     }
 
     pub(crate) fn needs_dlopen(&self) -> bool {
-        matches!(self, Self::SoOnly | Self::SoEmpty | Self::SoFd | Self::SoFdThread)
+        matches!(
+            self,
+            Self::SoOnly | Self::SoEmpty | Self::SoFd | Self::SoFdThread
+        )
     }
 
     pub(crate) fn needs_socketpair(&self) -> bool {
@@ -358,15 +380,15 @@ impl DebugInjectMode {
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct HideResult {
-    status: i32,             // 0=未执行, 1=成功, 负数=错误码
-    next_offset: i32,        // 推导出的 soinfo::next 偏移, -1=失败
-    entries_scanned: i32,    // 遍历的 soinfo 条目数
-    sym_matched: i32,        // 匹配的 linker 符号数
-    head_ptr: u64,           // solist head 地址
-    target_ptr: u64,         // 被隐藏的 soinfo 地址
-    error: [u8; 128],        // 错误描述
-    target_path: [u8; 128],  // 被隐藏目标的路径
-    head_path: [u8; 128],    // head 的路径
+    status: i32,            // 0=未执行, 1=成功, 负数=错误码
+    next_offset: i32,       // 推导出的 soinfo::next 偏移, -1=失败
+    entries_scanned: i32,   // 遍历的 soinfo 条目数
+    sym_matched: i32,       // 匹配的 linker 符号数
+    head_ptr: u64,          // solist head 地址
+    target_ptr: u64,        // 被隐藏的 soinfo 地址
+    error: [u8; 128],       // 错误描述
+    target_path: [u8; 128], // 被隐藏目标的路径
+    head_path: [u8; 128],   // head 的路径
 }
 
 impl Default for HideResult {
@@ -387,20 +409,29 @@ impl HideResult {
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 struct AndroidDlextinfo {
-    flags: u64,              // ANDROID_DLEXT_USE_LIBRARY_FD = 0x10
-    reserved_addr: u64,      // 0
-    reserved_size: u64,      // 0
-    relro_fd: i32,           // 0
-    library_fd: i32,         // memfd
-    library_fd_offset: u64,  // 0
-    library_namespace: u64,  // 0
+    flags: u64,             // ANDROID_DLEXT_USE_LIBRARY_FD = 0x10
+    reserved_addr: u64,     // 0
+    reserved_size: u64,     // 0
+    relro_fd: i32,          // 0
+    library_fd: i32,        // memfd
+    library_fd_offset: u64, // 0
+    library_namespace: u64, // 0
 }
 
 /// 在目标进程中创建 memfd 并从 host 写入 SO 数据
-fn create_and_fill_memfd(pid: i32, offsets: &LibcOffsets, so_data: &[u8], label: &str) -> Result<i32, String> {
+fn create_and_fill_memfd(
+    pid: i32,
+    offsets: &LibcOffsets,
+    so_data: &[u8],
+    label: &str,
+) -> Result<i32, String> {
     let target_memfd = create_memfd_in_target(pid, offsets)?;
     let host_memfd = extract_fd_from_target(pid, target_memfd)?;
-    log_verbose!("已提取目标 memfd: target_fd={} → host_fd={}", target_memfd, host_memfd);
+    log_verbose!(
+        "已提取目标 memfd: target_fd={} → host_fd={}",
+        target_memfd,
+        host_memfd
+    );
 
     // 写入 SO 数据到 host_memfd
     let mut written = 0usize;
@@ -448,7 +479,8 @@ fn dlopen_agent_via_ptrace(
         library_fd: target_memfd,
         ..Default::default()
     };
-    let ext_info_addr = alloc_and_write_struct(pid, offsets.malloc, &ext_info, "android_dlextinfo")?;
+    let ext_info_addr =
+        alloc_and_write_struct(pid, offsets.malloc, &ext_info, "android_dlextinfo")?;
 
     // 调用 android_dlopen_ext(name, RTLD_NOW=2, &ext_info)
     let handle = call_target_function(
@@ -510,7 +542,11 @@ pub(crate) fn inject_debug(
         return inject_to_process(pid, string_overrides).map(Some);
     }
 
-    log_info!("正在附加到进程 PID: {} (debug 模式: {})", pid, mode.description());
+    log_info!(
+        "正在附加到进程 PID: {} (debug 模式: {})",
+        pid,
+        mode.description()
+    );
 
     // 计算 offsets
     let self_base = get_lib_base(None, "libc.so")?;
@@ -578,7 +614,11 @@ pub(crate) fn inject_debug(
         let extracted = extract_fd_from_target(pid, fd0)?;
         // 关闭目标进程的 fd0
         let _ = call_target_function(pid, offsets.close, &[fd0 as usize], None);
-        log_success!("socketpair 创建成功: host_fd={}, target_fd1={}", extracted, fd1);
+        log_success!(
+            "socketpair 创建成功: host_fd={}, target_fd1={}",
+            extracted,
+            fd1
+        );
         host_fd = Some(extracted);
 
         // fd-only 模式到此为止：也关闭目标进程的 fd1（只测试 fd 是否被探测）
@@ -605,8 +645,7 @@ pub(crate) fn inject_debug(
         // 读取 hide_soinfo 结果（仅非空 SO）
         if !mode.use_empty_so() && handle != 0 {
             let sym_name = b"rust_get_hide_result\0";
-            let sym_addr = call_target_function(pid, offsets.malloc, &[sym_name.len()], None)
-                .ok();
+            let sym_addr = call_target_function(pid, offsets.malloc, &[sym_name.len()], None).ok();
             if let Some(sym_addr) = sym_addr {
                 let _ = write_bytes(pid, sym_addr, sym_name);
                 if let Ok(fn_ptr) = call_target_function(pid, dl.dlsym, &[handle, sym_addr], None) {
@@ -620,16 +659,34 @@ pub(crate) fn inject_debug(
                                     let hp_str = HideResult::cstr(&r.head_path);
                                     if r.status == 1 {
                                         log_success!("hide_soinfo: 成功隐藏 \"{}\"", tp_str);
-                                        log_info!("  next_offset=0x{:x}, scanned={}, syms={}", r.next_offset, r.entries_scanned, r.sym_matched);
-                                        log_info!("  head=\"{}\", target=0x{:x}", hp_str, r.target_ptr);
+                                        log_info!(
+                                            "  next_offset=0x{:x}, scanned={}, syms={}",
+                                            r.next_offset,
+                                            r.entries_scanned,
+                                            r.sym_matched
+                                        );
+                                        log_info!(
+                                            "  head=\"{}\", target=0x{:x}",
+                                            hp_str,
+                                            r.target_ptr
+                                        );
                                     } else {
                                         log_error!("hide_soinfo: 失败 (status={})", r.status);
                                         let err_str = HideResult::cstr(&r.error);
                                         if !err_str.is_empty() {
                                             log_error!("  error: {}", err_str);
                                         }
-                                        log_info!("  next_offset=0x{:x}, scanned={}, syms={}", r.next_offset, r.entries_scanned, r.sym_matched);
-                                        log_info!("  head=0x{:x}, head_path=\"{}\"", r.head_ptr, hp_str);
+                                        log_info!(
+                                            "  next_offset=0x{:x}, scanned={}, syms={}",
+                                            r.next_offset,
+                                            r.entries_scanned,
+                                            r.sym_matched
+                                        );
+                                        log_info!(
+                                            "  head=0x{:x}, head_path=\"{}\"",
+                                            r.head_ptr,
+                                            hp_str
+                                        );
                                     }
                                 }
                             }
@@ -647,7 +704,10 @@ pub(crate) fn inject_debug(
     // detach 前检查 maps 中 memfd/wwb 条目（调试用）
     if let Ok(raw) = std::fs::read(format!("/proc/{}/maps", pid)) {
         let maps = String::from_utf8_lossy(&raw);
-        let memfd_lines: Vec<&str> = maps.lines().filter(|l| l.contains("memfd") || l.contains("wwb")).collect();
+        let memfd_lines: Vec<&str> = maps
+            .lines()
+            .filter(|l| l.contains("memfd") || l.contains("wwb"))
+            .collect();
         if memfd_lines.is_empty() {
             log_info!("maps 中无 memfd/wwb 条目（KPM 隐藏生效）");
         } else {

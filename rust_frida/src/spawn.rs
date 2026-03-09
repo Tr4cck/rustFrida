@@ -16,7 +16,7 @@ use std::os::unix::net::UnixListener;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::injection::{inject_to_process, inject_debug, DebugInjectMode};
+use crate::injection::{inject_debug, inject_to_process, DebugInjectMode};
 use crate::proc_mem::ProcMem;
 use crate::process::{parse_proc_maps, wait_until_stopped, MapEntry};
 use crate::{log_error, log_info, log_step, log_success, log_verbose, log_warn};
@@ -180,10 +180,7 @@ fn spawn_and_wait_hello(package: &str) -> Result<SpawnHello, String> {
             ));
         }
         if dual_key && map.contains_key(package) {
-            return Err(format!(
-                "已有一个针对 {} 的 spawn 请求正在进行中",
-                package
-            ));
+            return Err(format!("已有一个针对 {} 的 spawn 请求正在进行中", package));
         }
         map.insert(process_name.clone(), notifier.clone());
         if dual_key {
@@ -299,13 +296,21 @@ pub(crate) fn spawn_and_inject_debug(
     string_overrides: &HashMap<String, String>,
     mode: DebugInjectMode,
 ) -> Result<(i32, Option<RawFd>), String> {
-    log_info!("Spawn Debug 模式: 准备注入 {} ({})", package, mode.description());
+    log_info!(
+        "Spawn Debug 模式: 准备注入 {} ({})",
+        package,
+        mode.description()
+    );
 
     let hello = spawn_and_wait_hello(package)?;
 
     // 5. 使用 debug 模式注入
     let pid = hello.pid as i32;
-    log_info!("正在向子进程 {} 执行 debug 注入 ({})...", pid, mode.description());
+    log_info!(
+        "正在向子进程 {} 执行 debug 注入 ({})...",
+        pid,
+        mode.description()
+    );
     let result_fd = match inject_debug(pid, mode, string_overrides) {
         Ok(fd) => fd,
         Err(e) => {
@@ -366,7 +371,10 @@ fn ensure_zymbiote_loaded() -> Result<(), String> {
         patches.retain(|p| live_zygote_pids.contains(&p.pid));
         let pruned = before - patches.len();
         if pruned > 0 {
-            log_verbose!("清理 {} 个已失效的 zygote patch（PID 已回收或进程已退出）", pruned);
+            log_verbose!(
+                "清理 {} 个已失效的 zygote patch（PID 已回收或进程已退出）",
+                pruned
+            );
         }
     }
 
@@ -450,9 +458,7 @@ fn is_process_64bit(pid: u32) -> bool {
     let mut header = [0u8; 5];
     let fd = file.as_raw_fd();
     let n = loop {
-        let ret = unsafe {
-            libc::pread(fd, header.as_mut_ptr() as *mut libc::c_void, 5, 0)
-        };
+        let ret = unsafe { libc::pread(fd, header.as_mut_ptr() as *mut libc::c_void, 5, 0) };
         if ret >= 0 {
             break ret;
         }
@@ -606,9 +612,7 @@ fn socket_addr_abstract(name: &str) -> Result<(libc::sockaddr_un, u32), String> 
 }
 
 /// 处理来自 zymbiote 子进程的连接
-fn handle_zymbiote_connection(
-    mut stream: std::os::unix::net::UnixStream,
-) -> Result<(), String> {
+fn handle_zymbiote_connection(mut stream: std::os::unix::net::UnixStream) -> Result<(), String> {
     // 读取 header: {pid: u32, ppid: u32, name_len: u32}
     let mut header = [0u8; 12];
     stream
@@ -647,8 +651,11 @@ fn handle_zymbiote_connection(
             Some(n)
         } else {
             // 前缀匹配: "com.foo.bar:service" 匹配注册的 "com.foo.bar"
-            let prefix_key = map.keys()
-                .find(|k| package_name.starts_with(k.as_str()) && package_name[k.len()..].starts_with(':'))
+            let prefix_key = map
+                .keys()
+                .find(|k| {
+                    package_name.starts_with(k.as_str()) && package_name[k.len()..].starts_with(':')
+                })
                 .cloned();
             prefix_key.and_then(|k| map.remove(&k))
         }
@@ -671,11 +678,7 @@ fn handle_zymbiote_connection(
     } else {
         // 没有匹配的请求，执行完整 resume 流程放行子进程
         // 与 Frida 一致：ACK → 等 EOF → wait SIGSTOP → revert patches → SIGCONT
-        log_verbose!(
-            "未找到 {} 的 spawn 请求，放行 pid={}",
-            package_name,
-            pid
-        );
+        log_verbose!("未找到 {} 的 spawn 请求，放行 pid={}", package_name, pid);
         do_resume_unmatched(pid, ppid, stream);
     }
 
@@ -881,11 +884,7 @@ fn launch_app(package: &str) -> Result<(), String> {
         if result.status.success() && !stdout.contains("Error:") {
             true
         } else {
-            log_verbose!(
-                "am start -n {} 失败: {}",
-                comp,
-                stdout.trim()
-            );
+            log_verbose!("am start -n {} 失败: {}", comp, stdout.trim());
             false
         }
     } else {
@@ -898,9 +897,12 @@ fn launch_app(package: &str) -> Result<(), String> {
         let result = std::process::Command::new("am")
             .args([
                 "start",
-                "-a", "android.intent.action.MAIN",
-                "-c", "android.intent.category.LAUNCHER",
-                "-p", package,
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LAUNCHER",
+                "-p",
+                package,
             ])
             .output()
             .map_err(|e| format!("启动应用失败: {}", e))?;
@@ -919,10 +921,7 @@ fn launch_app(package: &str) -> Result<(), String> {
                     ));
                 }
                 Err(e) => {
-                    return Err(format!(
-                        "启动应用 {} 失败: monkey 执行错误: {}",
-                        package, e
-                    ));
+                    return Err(format!("启动应用 {} 失败: monkey 执行错误: {}", package, e));
                 }
                 _ => {} // monkey succeeded
             }
@@ -964,7 +963,12 @@ fn inject_zymbiote(pid: u32, socket_name: &str) -> Result<ZygotePatch, String> {
 
     // 1. 找到 payload 写入位置（libstagefright.so 的 R+X 段末尾页）
     let loc = find_payload_location(&maps)?;
-    log_verbose!("Payload 写入位置: 0x{:x} (backing: {} +0x{:x})", loc.base, loc.path, loc.file_offset);
+    log_verbose!(
+        "Payload 写入位置: 0x{:x} (backing: {} +0x{:x})",
+        loc.base,
+        loc.path,
+        loc.file_offset
+    );
 
     // 2. 与 Frida 一致：提前检查 boot heap 候选区是否存在
     let has_heap_candidates = maps.iter().any(|e| is_boot_heap(e));
@@ -977,8 +981,11 @@ fn inject_zymbiote(pid: u32, socket_name: &str) -> Result<ZygotePatch, String> {
     log_verbose!("libc 函数地址已解析");
 
     // 4. 找到 setArgV0 函数地址
-    let setargv0_addr = find_export_in_maps(&maps, "libandroid_runtime.so",
-        "_Z27android_os_Process_setArgV0P7_JNIEnvP8_jobjectP8_jstring")?;
+    let setargv0_addr = find_export_in_maps(
+        &maps,
+        "libandroid_runtime.so",
+        "_Z27android_os_Process_setArgV0P7_JNIEnvP8_jobjectP8_jstring",
+    )?;
     log_verbose!("setArgV0 地址: 0x{:x}", setargv0_addr);
 
     // 5. 找到 selinux_android_setcontext（可选）
@@ -988,15 +995,14 @@ fn inject_zymbiote(pid: u32, socket_name: &str) -> Result<ZygotePatch, String> {
     }
 
     // 6. 先构建 payload 获取替换函数地址（用于 already-patched 检测）
-    let (payload_data, replacement_setargv0_addr, replacement_setcontext_addr) =
-        build_payload(
-            socket_name,
-            loc.base,
-            loc.prot,
-            &libc_funcs,
-            setargv0_addr,
-            setcontext_info.as_ref().map(|(addr, _)| *addr),
-        )?;
+    let (payload_data, replacement_setargv0_addr, replacement_setcontext_addr) = build_payload(
+        socket_name,
+        loc.base,
+        loc.prot,
+        &libc_funcs,
+        setargv0_addr,
+        setcontext_info.as_ref().map(|(addr, _)| *addr),
+    )?;
     log_verbose!("Payload 构建完成: {} bytes", payload_data.len());
 
     // 验证 payload 不超过一页（payload 占用目标段的末尾一页）
@@ -1012,17 +1018,16 @@ fn inject_zymbiote(pid: u32, socket_name: &str) -> Result<ZygotePatch, String> {
     // 7. 找到 boot heap 中的 setArgV0 指针
     //    传入 replacement 地址用于 already-patched 检测（与 Frida 一致）
     let (setargv0_ptr_addr, setargv0_ptr_backup, already_patched) =
-        find_setargv0_pointer_in_heap(
-            pid,
-            &maps,
-            setargv0_addr,
-            Some(replacement_setargv0_addr),
-        )?;
+        find_setargv0_pointer_in_heap(pid, &maps, setargv0_addr, Some(replacement_setargv0_addr))?;
     log_verbose!(
         "setArgV0 指针位置: 0x{:x} (原始值 0x{:x}){}",
         setargv0_ptr_addr,
         u64::from_ne_bytes(setargv0_ptr_backup),
-        if already_patched { " [already patched]" } else { "" }
+        if already_patched {
+            " [already patched]"
+        } else {
+            ""
+        }
     );
 
     // 8. SIGSTOP zygote
@@ -1040,7 +1045,9 @@ fn inject_zymbiote(pid: u32, socket_name: &str) -> Result<ZygotePatch, String> {
     struct SigcontGuard(u32);
     impl Drop for SigcontGuard {
         fn drop(&mut self) {
-            unsafe { libc::kill(self.0 as i32, libc::SIGCONT); }
+            unsafe {
+                libc::kill(self.0 as i32, libc::SIGCONT);
+            }
         }
     }
     let sigcont_guard = SigcontGuard(pid);
@@ -1064,10 +1071,7 @@ fn inject_zymbiote(pid: u32, socket_name: &str) -> Result<ZygotePatch, String> {
 
     // 10. 替换 setArgV0 指针 → zymbiote replacement
     //    already-patched 时：先用原始值还原，再写入新的替换值（与 Frida patches.apply + original 一致）
-    mem.pwrite_all(
-        &replacement_setargv0_addr.to_ne_bytes(),
-        setargv0_ptr_addr,
-    )?;
+    mem.pwrite_all(&replacement_setargv0_addr.to_ne_bytes(), setargv0_ptr_addr)?;
     log_verbose!(
         "setArgV0 指针已替换: 0x{:x} → 0x{:x}",
         u64::from_ne_bytes(setargv0_ptr_backup),
@@ -1118,8 +1122,8 @@ fn inject_zymbiote(pid: u32, socket_name: &str) -> Result<ZygotePatch, String> {
 fn read_backing_file_data(path: &str, file_offset: u64, len: usize) -> Result<Vec<u8>, String> {
     use std::os::unix::io::AsRawFd;
 
-    let file = std::fs::File::open(path)
-        .map_err(|e| format!("打开 backing 文件 {} 失败: {}", path, e))?;
+    let file =
+        std::fs::File::open(path).map_err(|e| format!("打开 backing 文件 {} 失败: {}", path, e))?;
 
     let mut buf = vec![0u8; len];
     let fd = file.as_raw_fd();
@@ -1142,11 +1146,7 @@ fn read_backing_file_data(path: &str, file_offset: u64, len: usize) -> Result<Ve
         return Err(format!("读取 backing 文件 {} 失败: {}", path, err));
     };
     if (n as usize) < len {
-        log_warn!(
-            "Backing 文件短读: 期望 {} 字节，实际 {} 字节",
-            len,
-            n
-        );
+        log_warn!("Backing 文件短读: 期望 {} 字节，实际 {} 字节", len, n);
     }
     Ok(buf)
 }
@@ -1155,8 +1155,8 @@ fn read_backing_file_data(path: &str, file_offset: u64, len: usize) -> Result<Ve
 struct PayloadLocation {
     base: u64,
     prot: u64,
-    path: String,       // 映射的backing文件路径（用于 COW 还原）
-    file_offset: u64,   // backing文件中的偏移
+    path: String,     // 映射的backing文件路径（用于 COW 还原）
+    file_offset: u64, // backing文件中的偏移
 }
 
 /// 找到 payload 写入位置：libstagefright.so 的 R+X 段末尾页
@@ -1166,7 +1166,9 @@ fn find_payload_location(maps: &[MapEntry]) -> Result<PayloadLocation, String> {
 
     // 查找 libstagefright.so 的第一个 r-x 段（与 Frida payload_base == 0 guard 一致）
     for entry in maps {
-        if entry.path.ends_with("/libstagefright.so") && entry.is_readable() && entry.is_executable()
+        if entry.path.ends_with("/libstagefright.so")
+            && entry.is_readable()
+            && entry.is_executable()
         {
             let base = entry.end - page_size;
             // 与 Frida 一致：基础 prot = R|X，如果段可写则加 W
@@ -1187,7 +1189,6 @@ fn find_payload_location(maps: &[MapEntry]) -> Result<PayloadLocation, String> {
 
     Err("未找到 libstagefright.so 的 R+X 段，无法写入 payload".to_string())
 }
-
 
 /// libc 函数地址集合
 struct LibcFunctions {
@@ -1219,14 +1220,13 @@ fn resolve_libc_functions(maps: &[MapEntry]) -> Result<LibcFunctions, String> {
     log_verbose!("libc.so 基址: 0x{:x}, 路径: {}", libc_base, libc_path);
 
     // 读取 libc ELF 文件解析导出表
-    let elf_data = std::fs::read(&libc_path)
-        .map_err(|e| format!("读取 {} 失败: {}", libc_path, e))?;
-    let elf = goblin::elf::Elf::parse(&elf_data)
-        .map_err(|e| format!("解析 libc ELF 失败: {}", e))?;
+    let elf_data =
+        std::fs::read(&libc_path).map_err(|e| format!("读取 {} 失败: {}", libc_path, e))?;
+    let elf =
+        goblin::elf::Elf::parse(&elf_data).map_err(|e| format!("解析 libc ELF 失败: {}", e))?;
 
     let resolve = |name: &str| -> Result<u64, String> {
-        find_dynsym_addr(&elf, name, libc_base)
-            .ok_or_else(|| format!("libc.so 中未找到 {}", name))
+        find_dynsym_addr(&elf, name, libc_base).ok_or_else(|| format!("libc.so 中未找到 {}", name))
     };
 
     Ok(LibcFunctions {
@@ -1246,11 +1246,7 @@ fn resolve_libc_functions(maps: &[MapEntry]) -> Result<LibcFunctions, String> {
 }
 
 /// 在 maps 中找到指定 SO 的导出符号地址
-fn find_export_in_maps(
-    maps: &[MapEntry],
-    so_name: &str,
-    symbol_name: &str,
-) -> Result<u64, String> {
+fn find_export_in_maps(maps: &[MapEntry], so_name: &str, symbol_name: &str) -> Result<u64, String> {
     let suffix = format!("/{}", so_name);
     let (base, path) = maps
         .iter()
@@ -1258,8 +1254,7 @@ fn find_export_in_maps(
         .map(|e| (e.start, e.path.clone()))
         .ok_or_else(|| format!("未找到 {}", so_name))?;
 
-    let elf_data =
-        std::fs::read(&path).map_err(|e| format!("读取 {} 失败: {}", path, e))?;
+    let elf_data = std::fs::read(&path).map_err(|e| format!("读取 {} 失败: {}", path, e))?;
     let elf =
         goblin::elf::Elf::parse(&elf_data).map_err(|e| format!("解析 {} 失败: {}", so_name, e))?;
 
@@ -1279,11 +1274,11 @@ fn find_setcontext_info(maps: &[MapEntry]) -> Option<(u64, Option<u64>)> {
         let path = &entry.path;
         let base = entry.start;
 
-        std::fs::read(path)
-            .ok()
-            .and_then(|data| goblin::elf::Elf::parse(&data).ok().and_then(|elf| {
-                find_dynsym_addr(&elf, "selinux_android_setcontext", base)
-            }))
+        std::fs::read(path).ok().and_then(|data| {
+            goblin::elf::Elf::parse(&data)
+                .ok()
+                .and_then(|elf| find_dynsym_addr(&elf, "selinux_android_setcontext", base))
+        })
     } else {
         None
     };
@@ -1291,17 +1286,14 @@ fn find_setcontext_info(maps: &[MapEntry]) -> Option<(u64, Option<u64>)> {
     let func_addr = func_addr?;
 
     // 尝试在 libandroid_runtime.so 的 GOT 中找到引用
-    let got_addr = find_got_entry_for_import(maps, "libandroid_runtime.so", "selinux_android_setcontext");
+    let got_addr =
+        find_got_entry_for_import(maps, "libandroid_runtime.so", "selinux_android_setcontext");
 
     Some((func_addr, got_addr))
 }
 
 /// 在指定 SO 的 GOT 中查找对某个导入符号的引用
-fn find_got_entry_for_import(
-    maps: &[MapEntry],
-    so_name: &str,
-    import_name: &str,
-) -> Option<u64> {
+fn find_got_entry_for_import(maps: &[MapEntry], so_name: &str, import_name: &str) -> Option<u64> {
     let suffix = format!("/{}", so_name);
     let entry = maps
         .iter()
@@ -1356,7 +1348,10 @@ fn find_setargv0_pointer_in_heap(
     // 与 Frida is_boot_heap() 一致
     let candidates: Vec<&MapEntry> = maps.iter().filter(|e| is_boot_heap(e)).collect();
 
-    log_verbose!("搜索 {} 个 boot heap 区域查找 setArgV0 指针", candidates.len());
+    log_verbose!(
+        "搜索 {} 个 boot heap 区域查找 setArgV0 指针",
+        candidates.len()
+    );
 
     for entry in &candidates {
         let size = (entry.end - entry.start) as usize;
@@ -1468,8 +1463,10 @@ fn build_payload(
             .ok_or_else(|| format!("zymbiote ELF 中未找到符号 {}", name))
     };
 
-    let replacement_setargv0_offset = find_symbol_offset("rustfrida_zymbiote_replacement_setargv0")?;
-    let replacement_setcontext_offset = find_symbol_offset("rustfrida_zymbiote_replacement_setcontext")?;
+    let replacement_setargv0_offset =
+        find_symbol_offset("rustfrida_zymbiote_replacement_setargv0")?;
+    let replacement_setcontext_offset =
+        find_symbol_offset("rustfrida_zymbiote_replacement_setcontext")?;
     let zymbiote_offset = find_symbol_offset("zymbiote")?;
 
     // 绝对地址 = payload_base + 段内偏移
@@ -1487,7 +1484,11 @@ fn build_payload(
     // payload_base
     let ctx = &mut payload[ctx_base..];
     write_u64(ctx, CTX_PAYLOAD_BASE - CTX_SOCKET_PATH, payload_base);
-    write_u64(ctx, CTX_PAYLOAD_SIZE - CTX_SOCKET_PATH, seg_file_size as u64);
+    write_u64(
+        ctx,
+        CTX_PAYLOAD_SIZE - CTX_SOCKET_PATH,
+        seg_file_size as u64,
+    );
     write_u64(
         ctx,
         CTX_PAYLOAD_ORIGINAL_PROT - CTX_SOCKET_PATH,
@@ -1523,7 +1524,11 @@ fn build_payload(
     // ARM64 ADRP+ADD 为 PC-relative 寻址，代码和数据在同一段内，
     // 移动到新地址后相对偏移不变。实测 .got 为空且无动态重定位。
 
-    Ok((payload, replacement_setargv0_addr, replacement_setcontext_addr))
+    Ok((
+        payload,
+        replacement_setargv0_addr,
+        replacement_setcontext_addr,
+    ))
 }
 
 /// 在 payload 缓冲区内写入 u64 值
@@ -1637,33 +1642,19 @@ pub(crate) fn cleanup_zygote_patches() {
             Ok(mem) => {
                 // 还原 payload
                 if let Err(e) = mem.pwrite_all(&patch.payload_backup, patch.payload_base) {
-                    log_error!(
-                        "还原 zygote {} payload 失败: {}",
-                        patch.pid,
-                        e
-                    );
+                    log_error!("还原 zygote {} payload 失败: {}", patch.pid, e);
                 }
 
                 // 还原 setArgV0 指针
-                if let Err(e) = mem.pwrite_all(
-                    &patch.setargv0_ptr_backup,
-                    patch.setargv0_ptr_addr,
-                ) {
-                    log_error!(
-                        "还原 zygote {} setArgV0 指针失败: {}",
-                        patch.pid,
-                        e
-                    );
+                if let Err(e) = mem.pwrite_all(&patch.setargv0_ptr_backup, patch.setargv0_ptr_addr)
+                {
+                    log_error!("还原 zygote {} setArgV0 指针失败: {}", patch.pid, e);
                 }
 
                 // 还原 setcontext GOT
                 if let Some((addr, backup)) = &patch.setcontext_got {
                     if let Err(e) = mem.pwrite_all(backup, *addr) {
-                        log_error!(
-                            "还原 zygote {} setcontext GOT 失败: {}",
-                            patch.pid,
-                            e
-                        );
+                        log_error!("还原 zygote {} setcontext GOT 失败: {}", patch.pid, e);
                     }
                 }
 

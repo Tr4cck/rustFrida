@@ -1,12 +1,12 @@
 //! JavaScript API implementations
 
+pub(crate) mod callback_util;
 pub mod console;
 pub mod hook_api;
 pub mod java;
 pub mod memory;
 pub mod module;
 pub mod ptr;
-pub(crate) mod callback_util;
 pub(crate) mod util;
 
 pub use console::register_console;

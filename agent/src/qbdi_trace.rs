@@ -13,17 +13,17 @@ use std::ptr::null_mut;
 use std::sync::OnceLock;
 use std::thread;
 
-use qbdi::{FPRState, GPRState, RWord, VMAction, VirtualStack, VM, VMRef};
 use qbdi::ffi::{
-    InstPosition_QBDI_PREINST, VMAction_QBDI_CONTINUE, VMInstanceRef,
-    MemoryAccessType_QBDI_MEMORY_READ, VMEvent_QBDI_EXEC_TRANSFER_RETURN,
+    InstPosition_QBDI_PREINST, MemoryAccessType_QBDI_MEMORY_READ, VMAction_QBDI_CONTINUE,
+    VMEvent_QBDI_EXEC_TRANSFER_RETURN, VMInstanceRef,
 };
+use qbdi::{FPRState, GPRState, RWord, VMAction, VMRef, VirtualStack, VM};
 
 // 条件编译：仅在同时启用 frida-gum 时才引入这些依赖
 #[cfg(feature = "frida-gum")]
-use frida_gum::{NativePointer, Process};
+use crate::stalker::{get_interceptor, GLOBAL_ORIGINAL, GLOBAL_TARGET, GUM};
 #[cfg(feature = "frida-gum")]
-use crate::stalker::{get_interceptor, GUM, GLOBAL_TARGET, GLOBAL_ORIGINAL};
+use frida_gum::{NativePointer, Process};
 
 // 内存访问记录
 #[derive(Clone, PartialEq, Message)]
@@ -75,7 +75,10 @@ fn file_log_channel<T: Send + 'static>(
         let log_path = match OUTPUT_PATH.get() {
             Some(base) => format!("{}/{}", base, filename),
             None => {
-                log_msg(format!("错误: OUTPUT_PATH 未设置，无法创建{}日志文件", desc));
+                log_msg(format!(
+                    "错误: OUTPUT_PATH 未设置，无法创建{}日志文件",
+                    desc
+                ));
                 return;
             }
         };
@@ -213,7 +216,9 @@ extern "C" fn exec_transfer_return_cb(
 /// QBDI 替换回调（需要 frida-gum 支持时使用）
 #[cfg(feature = "frida-gum")]
 pub extern "C" fn replaceq(jenv: RWord, jobj: RWord) -> RWord {
-    get_interceptor().revert(NativePointer(GLOBAL_TARGET.get().unwrap().clone() as *mut c_void));
+    get_interceptor().revert(NativePointer(
+        GLOBAL_TARGET.get().unwrap().clone() as *mut c_void
+    ));
     log_msg(format!("replaceq: arg1=0x{:x}, arg2=0x{:x}\n", jenv, jobj));
 
     let value: u64;
@@ -255,9 +260,8 @@ pub extern "C" fn replaceq(jenv: RWord, jobj: RWord) -> RWord {
                 ret
             } else {
                 log_msg("QBDI vm.run() also failed, calling original".to_string());
-                let orig: extern "C" fn(RWord, RWord) -> RWord = unsafe {
-                    std::mem::transmute(*GLOBAL_ORIGINAL.get().unwrap())
-                };
+                let orig: extern "C" fn(RWord, RWord) -> RWord =
+                    unsafe { std::mem::transmute(*GLOBAL_ORIGINAL.get().unwrap()) };
                 orig(jenv, jobj)
             }
         }
@@ -281,8 +285,17 @@ pub fn qfollow(lib: &str, addr: usize) {
 
     // 添加回调
     vm.add_code_cb(InstPosition_QBDI_PREINST, Some(qbdicb), null_mut(), 0);
-    vm.add_mem_access_cb(MemoryAccessType_QBDI_MEMORY_READ, Some(mem_acc_cb), null_mut(), 0);
-    vm.add_vm_event_cb(VMEvent_QBDI_EXEC_TRANSFER_RETURN, Some(exec_transfer_return_cb), null_mut());
+    vm.add_mem_access_cb(
+        MemoryAccessType_QBDI_MEMORY_READ,
+        Some(mem_acc_cb),
+        null_mut(),
+        0,
+    );
+    vm.add_vm_event_cb(
+        VMEvent_QBDI_EXEC_TRANSFER_RETURN,
+        Some(exec_transfer_return_cb),
+        null_mut(),
+    );
 
     // 存储 VM 到全局变量
     let _ = GLOBAL_VM.set(VMCell(UnsafeCell::new(vm)));
@@ -291,7 +304,7 @@ pub fn qfollow(lib: &str, addr: usize) {
     match interceptor.replace(
         NativePointer(target as *mut c_void),
         NativePointer(replaceq as *mut c_void),
-        NativePointer(null_mut())
+        NativePointer(null_mut()),
     ) {
         Ok(original) => {
             let _ = GLOBAL_ORIGINAL.set(original.0 as usize);

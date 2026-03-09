@@ -402,8 +402,7 @@ impl MapEntry {
 /// 结构化解析 /proc/<pid>/maps
 pub(crate) fn parse_proc_maps(pid: u32) -> Result<Vec<MapEntry>, String> {
     let maps_path = format!("/proc/{}/maps", pid);
-    let mut file = File::open(&maps_path)
-        .map_err(|e| format!("无法打开 {}: {}", maps_path, e))?;
+    let mut file = File::open(&maps_path).map_err(|e| format!("无法打开 {}: {}", maps_path, e))?;
     let mut raw = Vec::new();
     std::io::Read::read_to_end(&mut file, &mut raw)
         .map_err(|e| format!("读取 {} 失败: {}", maps_path, e))?;
@@ -421,10 +420,10 @@ pub(crate) fn parse_proc_maps(pid: u32) -> Result<Vec<MapEntry>, String> {
             continue;
         }
 
-        let start = u64::from_str_radix(addr_parts[0], 16)
-            .map_err(|e| format!("解析地址失败: {}", e))?;
-        let end = u64::from_str_radix(addr_parts[1], 16)
-            .map_err(|e| format!("解析地址失败: {}", e))?;
+        let start =
+            u64::from_str_radix(addr_parts[0], 16).map_err(|e| format!("解析地址失败: {}", e))?;
+        let end =
+            u64::from_str_radix(addr_parts[1], 16).map_err(|e| format!("解析地址失败: {}", e))?;
 
         let perms = parts[1].to_string();
         let offset = if parts.len() > 2 {

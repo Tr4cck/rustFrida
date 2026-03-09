@@ -7,7 +7,6 @@
 ///
 /// 二进制格式参考 Linux kernel: security/selinux/ss/policydb.c
 /// 关键点：所有整数使用小端序，字符串格式为 [len 在 u32 batch 中, key bytes 在 batch 之后]
-
 use crate::{log_error, log_info, log_success, log_verbose, log_warn};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -65,12 +64,7 @@ const RULES: &[(&str, &str, &str, &[&str])] = &[
     ),
     ("zygote", "zygote", "capability", &["sys_ptrace"]),
     ("?app_zygote", "zygote_exec", "file", &["read"]),
-    (
-        "system_server",
-        "?apex_art_data_file",
-        "file",
-        &["execute"],
-    ),
+    ("system_server", "?apex_art_data_file", "file", &["execute"]),
 ];
 
 // ─── 全局状态 ───
@@ -323,7 +317,7 @@ fn skip_constraints(r: &mut R, ncons: u32, version: u32) -> Result<(), String> {
 
             if expr_type == CEXPR_NAMES {
                 skip_ebitmap(r)?; // names
-                // version >= 29: type_set (libsepol always writes it)
+                                  // version >= 29: type_set (libsepol always writes it)
                 if version >= POLICYDB_VERSION_CONSTRAINT_NAMES {
                     skip_type_set(r)?;
                 }
@@ -345,12 +339,12 @@ fn parse_classes(
     let mut classes = HashMap::new();
     for _ in 0..nel {
         // 6 u32s batch
-        let len = r.u32()?;     // class key len
-        let len2 = r.u32()?;    // common key len
-        let value = r.u32()?;   // class value (ID)
-        let _buf3 = r.u32()?;   // (primary perms count of class, unused)
+        let len = r.u32()?; // class key len
+        let len2 = r.u32()?; // common key len
+        let value = r.u32()?; // class value (ID)
+        let _buf3 = r.u32()?; // (primary perms count of class, unused)
         let perm_nel = r.u32()?; // number of class-specific permissions
-        let ncons = r.u32()?;   // number of constraints
+        let ncons = r.u32()?; // number of constraints
 
         let key = r.str_of(len)?;
 
@@ -694,7 +688,11 @@ fn add_rules(info: &mut PolicyInfo, self_type: &str) -> Result<usize, String> {
                         modified += 1;
                         log_verbose!(
                             "修改: {} → {} [{}] 0x{:X} → 0x{:X}",
-                            source_name, target_name, class, old, *data
+                            source_name,
+                            target_name,
+                            class,
+                            old,
+                            *data
                         );
                     }
                 }
@@ -710,7 +708,10 @@ fn add_rules(info: &mut PolicyInfo, self_type: &str) -> Result<usize, String> {
                 added += 1;
                 log_verbose!(
                     "新增: {} → {} [{}] perms=0x{:X}",
-                    source_name, target_name, class, perm_mask
+                    source_name,
+                    target_name,
+                    class,
+                    perm_mask
                 );
             }
         }
@@ -797,8 +798,7 @@ fn setenforce(enforce: bool) -> Result<(), String> {
 /// Rust File::write 可能拆分大缓冲区，直接使用 libc::write 确保语义一致。
 fn write_policy_file(path: &str, data: &[u8]) -> Result<(), String> {
     use std::ffi::CString;
-    let c_path =
-        CString::new(path).map_err(|_| format!("路径包含 null 字节: {}", path))?;
+    let c_path = CString::new(path).map_err(|_| format!("路径包含 null 字节: {}", path))?;
     let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDWR) };
     if fd < 0 {
         return Err(format!(
@@ -854,8 +854,8 @@ pub fn patch_selinux_for_spawn() -> Result<(), String> {
     let self_type = get_self_type()?;
     log_verbose!("当前 SELinux domain: {}", self_type);
 
-    let policy_data = std::fs::read("/sys/fs/selinux/policy")
-        .map_err(|e| format!("读取策略失败: {}", e))?;
+    let policy_data =
+        std::fs::read("/sys/fs/selinux/policy").map_err(|e| format!("读取策略失败: {}", e))?;
     log_verbose!("策略大小: {} bytes", policy_data.len());
 
     let mut info = parse_policy(&policy_data)?;

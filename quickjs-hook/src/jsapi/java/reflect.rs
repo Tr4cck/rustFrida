@@ -22,7 +22,10 @@ use super::jni_core::*;
 /// 4. Fallback: ToReflected* → reflect 对象 → art* 字段 (long)
 /// Common fn signature for ToReflectedMethod / ToReflectedField
 type ToReflectedFn = unsafe extern "C" fn(
-    JniEnv, *mut std::ffi::c_void, *mut std::ffi::c_void, u8,
+    JniEnv,
+    *mut std::ffi::c_void,
+    *mut std::ffi::c_void,
+    u8,
 ) -> *mut std::ffi::c_void;
 
 unsafe fn decode_jni_id<F1, F2>(
@@ -41,7 +44,9 @@ where
     F1: FnOnce(u64) -> Option<u64>,
     F2: FnOnce(&ReflectIds) -> *mut std::ffi::c_void,
 {
-    if id == 0 { return 0; }
+    if id == 0 {
+        return 0;
+    }
 
     if super::jni_core::is_jni_pointer_mode() {
         return id;
@@ -85,7 +90,9 @@ where
     let delete_local_ref: DeleteLocalRefFn = jni_fn!(env, DeleteLocalRefFn, JNI_DELETE_LOCAL_REF);
 
     let reflected_obj = to_reflected_fn(
-        env, cls, id as *mut std::ffi::c_void,
+        env,
+        cls,
+        id as *mut std::ffi::c_void,
         if is_static { 1 } else { 0 },
     );
     if reflected_obj.is_null() || jni_check_exc(env) {
@@ -111,10 +118,16 @@ pub(super) unsafe fn decode_method_id(
     method_id: u64,
     is_static: bool,
 ) -> u64 {
-    let to_reflected: ToReflectedMethodFn = jni_fn!(env, ToReflectedMethodFn, JNI_TO_REFLECTED_METHOD);
+    let to_reflected: ToReflectedMethodFn =
+        jni_fn!(env, ToReflectedMethodFn, JNI_TO_REFLECTED_METHOD);
     decode_jni_id(
-        env, cls, method_id, is_static,
-        "method_id", "ArtMethod*", "artMethod",
+        env,
+        cls,
+        method_id,
+        is_static,
+        "method_id",
+        "ArtMethod*",
+        "artMethod",
         |id| super::jni_core::decode_method_id_via_manager(id),
         |r| r.art_method_field_id,
         to_reflected,
@@ -129,8 +142,13 @@ pub(super) unsafe fn decode_field_id(
 ) -> u64 {
     let to_reflected: ToReflectedFieldFn = jni_fn!(env, ToReflectedFieldFn, JNI_TO_REFLECTED_FIELD);
     decode_jni_id(
-        env, cls, field_id, is_static,
-        "field_id", "ArtField*", "artField",
+        env,
+        cls,
+        field_id,
+        is_static,
+        "field_id",
+        "ArtField*",
+        "artField",
         |id| super::jni_core::decode_field_id_via_manager(id),
         |r| r.art_field_field_id,
         to_reflected,
@@ -183,10 +201,14 @@ pub(super) static LC_MID_OVERRIDE: AtomicU64 = AtomicU64::new(0);
 /// 使所有隐藏 API 对反射可见（getDeclaredFields 等不再过滤）。
 unsafe fn bypass_hidden_api_restrictions(env: JniEnv) {
     let find_class: FindClassFn = jni_fn!(env, FindClassFn, JNI_FIND_CLASS);
-    let get_static_mid: GetStaticMethodIdFn = jni_fn!(env, GetStaticMethodIdFn, JNI_GET_STATIC_METHOD_ID);
+    let get_static_mid: GetStaticMethodIdFn =
+        jni_fn!(env, GetStaticMethodIdFn, JNI_GET_STATIC_METHOD_ID);
     let get_mid: GetMethodIdFn = jni_fn!(env, GetMethodIdFn, JNI_GET_METHOD_ID);
-    let call_static_obj: CallStaticObjectMethodAFn =
-        jni_fn!(env, CallStaticObjectMethodAFn, JNI_CALL_STATIC_OBJECT_METHOD_A);
+    let call_static_obj: CallStaticObjectMethodAFn = jni_fn!(
+        env,
+        CallStaticObjectMethodAFn,
+        JNI_CALL_STATIC_OBJECT_METHOD_A
+    );
     let call_void: CallVoidMethodAFn = jni_fn!(env, CallVoidMethodAFn, JNI_CALL_VOID_METHOD_A);
     let new_string_utf: NewStringUtfFn = jni_fn!(env, NewStringUtfFn, JNI_NEW_STRING_UTF);
     let new_obj_array: NewObjectArrayFn = jni_fn!(env, NewObjectArrayFn, JNI_NEW_OBJECT_ARRAY);
@@ -205,7 +227,12 @@ unsafe fn bypass_hidden_api_restrictions(env: JniEnv) {
     // 2. VMRuntime.getRuntime() → VMRuntime instance
     let c_get_runtime = CString::new("getRuntime").unwrap();
     let c_get_runtime_sig = CString::new("()Ldalvik/system/VMRuntime;").unwrap();
-    let get_runtime_mid = get_static_mid(env, vmrt_cls, c_get_runtime.as_ptr(), c_get_runtime_sig.as_ptr());
+    let get_runtime_mid = get_static_mid(
+        env,
+        vmrt_cls,
+        c_get_runtime.as_ptr(),
+        c_get_runtime_sig.as_ptr(),
+    );
     if get_runtime_mid.is_null() || jni_check_exc(env) {
         delete_local_ref(env, vmrt_cls);
         output_message("[java] hidden API bypass: getRuntime() not found");
@@ -225,7 +252,9 @@ unsafe fn bypass_hidden_api_restrictions(env: JniEnv) {
     if set_mid.is_null() || jni_check_exc(env) {
         delete_local_ref(env, runtime);
         delete_local_ref(env, vmrt_cls);
-        output_message("[java] hidden API bypass: setHiddenApiExemptions not found (pre-Android 10?)");
+        output_message(
+            "[java] hidden API bypass: setHiddenApiExemptions not found (pre-Android 10?)",
+        );
         return;
     }
 
@@ -245,7 +274,12 @@ unsafe fn bypass_hidden_api_restrictions(env: JniEnv) {
 
         // 5. 调用: runtime.setHiddenApiExemptions(arr)
         let args: [*mut std::ffi::c_void; 1] = [arr];
-        call_void(env, runtime, set_mid, args.as_ptr() as *const std::ffi::c_void);
+        call_void(
+            env,
+            runtime,
+            set_mid,
+            args.as_ptr() as *const std::ffi::c_void,
+        );
         if jni_check_exc(env) {
             output_message("[java] hidden API bypass: setHiddenApiExemptions threw exception");
         } else {
@@ -253,8 +287,12 @@ unsafe fn bypass_hidden_api_restrictions(env: JniEnv) {
         }
     }
 
-    if !arr.is_null() { delete_local_ref(env, arr); }
-    if !empty_str.is_null() { delete_local_ref(env, empty_str); }
+    if !arr.is_null() {
+        delete_local_ref(env, arr);
+    }
+    if !empty_str.is_null() {
+        delete_local_ref(env, empty_str);
+    }
     delete_local_ref(env, str_cls);
     delete_local_ref(env, runtime);
     delete_local_ref(env, vmrt_cls);
@@ -276,7 +314,8 @@ pub(super) unsafe fn cache_reflect_ids(env: JniEnv) {
 
         let find_class: FindClassFn = jni_fn!(env, FindClassFn, JNI_FIND_CLASS);
         let get_mid: GetMethodIdFn = jni_fn!(env, GetMethodIdFn, JNI_GET_METHOD_ID);
-        let delete_local_ref: DeleteLocalRefFn = jni_fn!(env, DeleteLocalRefFn, JNI_DELETE_LOCAL_REF);
+        let delete_local_ref: DeleteLocalRefFn =
+            jni_fn!(env, DeleteLocalRefFn, JNI_DELETE_LOCAL_REF);
         let new_global_ref: NewGlobalRefFn = jni_fn!(env, NewGlobalRefFn, JNI_NEW_GLOBAL_REF);
 
         let c_class_cls = CString::new("java/lang/Class").unwrap();
@@ -306,20 +345,34 @@ pub(super) unsafe fn cache_reflect_ids(env: JniEnv) {
         let c_get_name_sig = CString::new("()Ljava/lang/String;").unwrap();
 
         let get_field_mid = get_mid(env, class_cls, c_get_field.as_ptr(), c_field_sig.as_ptr());
-        let get_declared_field_mid = get_mid(env, class_cls, c_get_declared.as_ptr(), c_field_sig.as_ptr());
-        let field_get_type_mid = get_mid(env, field_cls, c_get_type.as_ptr(), c_get_type_sig.as_ptr());
-        let class_get_name_mid = get_mid(env, class_cls, c_get_name.as_ptr(), c_get_name_sig.as_ptr());
+        let get_declared_field_mid = get_mid(
+            env,
+            class_cls,
+            c_get_declared.as_ptr(),
+            c_field_sig.as_ptr(),
+        );
+        let field_get_type_mid =
+            get_mid(env, field_cls, c_get_type.as_ptr(), c_get_type_sig.as_ptr());
+        let class_get_name_mid =
+            get_mid(env, class_cls, c_get_name.as_ptr(), c_get_name_sig.as_ptr());
         jni_check_exc(env);
 
         // Clean up local refs for the Class objects (method IDs are global)
-        if !class_cls.is_null() { delete_local_ref(env, class_cls); }
-        if !field_cls.is_null() { delete_local_ref(env, field_cls); }
+        if !class_cls.is_null() {
+            delete_local_ref(env, class_cls);
+        }
+        if !field_cls.is_null() {
+            delete_local_ref(env, field_cls);
+        }
 
         // --- Capture app ClassLoader for loading app classes from native threads ---
         // ActivityThread.currentActivityThread().getApplication().getClassLoader()
         // Use CallObjectMethodA / CallStaticObjectMethodA with null jvalue* for no-arg methods
-        let call_static_obj_a: CallStaticObjectMethodAFn =
-            jni_fn!(env, CallStaticObjectMethodAFn, JNI_CALL_STATIC_OBJECT_METHOD_A);
+        let call_static_obj_a: CallStaticObjectMethodAFn = jni_fn!(
+            env,
+            CallStaticObjectMethodAFn,
+            JNI_CALL_STATIC_OBJECT_METHOD_A
+        );
         let call_obj_a: CallObjectMethodAFn =
             jni_fn!(env, CallObjectMethodAFn, JNI_CALL_OBJECT_METHOD_A);
         let get_static_mid: GetStaticMethodIdFn =
@@ -342,7 +395,8 @@ pub(super) unsafe fn cache_reflect_ids(env: JniEnv) {
                 if !at_obj.is_null() && !jni_check_exc(env) {
                     let c_get_app = CString::new("getApplication").unwrap();
                     let c_get_app_sig = CString::new("()Landroid/app/Application;").unwrap();
-                    let get_app_mid = get_mid(env, at_cls, c_get_app.as_ptr(), c_get_app_sig.as_ptr());
+                    let get_app_mid =
+                        get_mid(env, at_cls, c_get_app.as_ptr(), c_get_app_sig.as_ptr());
 
                     if !get_app_mid.is_null() && !jni_check_exc(env) {
                         let app = call_obj_a(env, at_obj, get_app_mid, null_args);
@@ -352,17 +406,27 @@ pub(super) unsafe fn cache_reflect_ids(env: JniEnv) {
                             if !ctx_cls.is_null() && !jni_check_exc(env) {
                                 let c_gcl = CString::new("getClassLoader").unwrap();
                                 let c_gcl_sig = CString::new("()Ljava/lang/ClassLoader;").unwrap();
-                                let gcl_mid = get_mid(env, ctx_cls, c_gcl.as_ptr(), c_gcl_sig.as_ptr());
+                                let gcl_mid =
+                                    get_mid(env, ctx_cls, c_gcl.as_ptr(), c_gcl_sig.as_ptr());
                                 if !gcl_mid.is_null() && !jni_check_exc(env) {
                                     let cl = call_obj_a(env, app, gcl_mid, null_args);
                                     if !cl.is_null() && !jni_check_exc(env) {
                                         app_classloader = new_global_ref(env, cl);
-                                        let c_cl_cls = CString::new("java/lang/ClassLoader").unwrap();
+                                        let c_cl_cls =
+                                            CString::new("java/lang/ClassLoader").unwrap();
                                         let cl_cls = find_class(env, c_cl_cls.as_ptr());
                                         if !cl_cls.is_null() && !jni_check_exc(env) {
                                             let c_lc = CString::new("loadClass").unwrap();
-                                            let c_lc_sig = CString::new("(Ljava/lang/String;)Ljava/lang/Class;").unwrap();
-                                            load_class_mid = get_mid(env, cl_cls, c_lc.as_ptr(), c_lc_sig.as_ptr());
+                                            let c_lc_sig = CString::new(
+                                                "(Ljava/lang/String;)Ljava/lang/Class;",
+                                            )
+                                            .unwrap();
+                                            load_class_mid = get_mid(
+                                                env,
+                                                cl_cls,
+                                                c_lc.as_ptr(),
+                                                c_lc_sig.as_ptr(),
+                                            );
                                             delete_local_ref(env, cl_cls);
                                         }
                                         delete_local_ref(env, cl);
@@ -401,7 +465,8 @@ pub(super) unsafe fn cache_reflect_ids(env: JniEnv) {
             if !fid.is_null() && !jni_check_exc(env) {
                 art_method_field_id = fid;
                 output_message(&format!(
-                    "[java] cached artMethod field ID from {}", parent_cls_name
+                    "[java] cached artMethod field ID from {}",
+                    parent_cls_name
                 ));
                 break;
             }
@@ -415,7 +480,8 @@ pub(super) unsafe fn cache_reflect_ids(env: JniEnv) {
             if !field_reflect_cls.is_null() && !jni_check_exc(env) {
                 let c_art_field = CString::new("artField").unwrap();
                 let c_j = CString::new("J").unwrap();
-                let fid = get_field_id_fn(env, field_reflect_cls, c_art_field.as_ptr(), c_j.as_ptr());
+                let fid =
+                    get_field_id_fn(env, field_reflect_cls, c_art_field.as_ptr(), c_j.as_ptr());
                 delete_local_ref(env, field_reflect_cls);
                 if !fid.is_null() && !jni_check_exc(env) {
                     art_field_field_id = fid;
@@ -445,11 +511,15 @@ pub(super) unsafe fn cache_reflect_ids(env: JniEnv) {
 /// 更新 app ClassLoader（由 Java.ready() gate hook 在 Instrumentation.newApplication 中调用）。
 /// 将 local ref 转为 global ref 并缓存 loadClass method ID。
 pub(super) unsafe fn update_app_classloader(env: JniEnv, cl_local: *mut std::ffi::c_void) {
-    if cl_local.is_null() { return; }
+    if cl_local.is_null() {
+        return;
+    }
 
     let new_global_ref: NewGlobalRefFn = jni_fn!(env, NewGlobalRefFn, JNI_NEW_GLOBAL_REF);
     let gl = new_global_ref(env, cl_local);
-    if gl.is_null() { return; }
+    if gl.is_null() {
+        return;
+    }
 
     CL_OVERRIDE.store(gl as u64, std::sync::atomic::Ordering::Release);
 
@@ -457,7 +527,8 @@ pub(super) unsafe fn update_app_classloader(env: JniEnv, cl_local: *mut std::ffi
     if LC_MID_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) == 0 {
         let find_class: FindClassFn = jni_fn!(env, FindClassFn, JNI_FIND_CLASS);
         let get_mid: GetMethodIdFn = jni_fn!(env, GetMethodIdFn, JNI_GET_METHOD_ID);
-        let delete_local_ref: DeleteLocalRefFn = jni_fn!(env, DeleteLocalRefFn, JNI_DELETE_LOCAL_REF);
+        let delete_local_ref: DeleteLocalRefFn =
+            jni_fn!(env, DeleteLocalRefFn, JNI_DELETE_LOCAL_REF);
 
         let c_cl_cls = CString::new("java/lang/ClassLoader").unwrap();
         let cl_cls = find_class(env, c_cl_cls.as_ptr());
@@ -479,7 +550,9 @@ pub(super) fn is_classloader_ready() -> bool {
     if CL_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) != 0 {
         return true;
     }
-    REFLECT_IDS.get().map_or(false, |r| !r.app_classloader.is_null())
+    REFLECT_IDS
+        .get()
+        .map_or(false, |r| !r.app_classloader.is_null())
 }
 
 /// Find a Java class by name. Tries JNI FindClass first (works for system/framework classes),
@@ -512,7 +585,10 @@ pub(super) unsafe fn find_class_safe(env: JniEnv, class_name: &str) -> *mut std:
         let ovr_cl = CL_OVERRIDE.load(std::sync::atomic::Ordering::Acquire);
         let ovr_mid = LC_MID_OVERRIDE.load(std::sync::atomic::Ordering::Acquire);
         if ovr_cl != 0 && ovr_mid != 0 {
-            (ovr_cl as *mut std::ffi::c_void, ovr_mid as *mut std::ffi::c_void)
+            (
+                ovr_cl as *mut std::ffi::c_void,
+                ovr_mid as *mut std::ffi::c_void,
+            )
         } else {
             match REFLECT_IDS.get() {
                 Some(r) if !r.app_classloader.is_null() && !r.load_class_mid.is_null() => {
@@ -541,8 +617,12 @@ pub(super) unsafe fn find_class_safe(env: JniEnv, class_name: &str) -> *mut std:
     }
 
     let args: [*mut std::ffi::c_void; 1] = [jstr];
-    let result = call_obj(env, app_cl, lc_mid,
-                          args.as_ptr() as *const std::ffi::c_void);
+    let result = call_obj(
+        env,
+        app_cl,
+        lc_mid,
+        args.as_ptr() as *const std::ffi::c_void,
+    );
     delete_local_ref(env, jstr);
 
     // CRITICAL: Always clear pending exceptions before returning.
@@ -611,7 +691,8 @@ pub(super) unsafe fn enumerate_methods(
     let call_obj: CallObjectMethodAFn = jni_fn!(env, CallObjectMethodAFn, JNI_CALL_OBJECT_METHOD_A);
     let call_int: CallIntMethodAFn = jni_fn!(env, CallIntMethodAFn, JNI_CALL_INT_METHOD_A);
     let get_str: GetStringUtfCharsFn = jni_fn!(env, GetStringUtfCharsFn, JNI_GET_STRING_UTF_CHARS);
-    let rel_str: ReleaseStringUtfCharsFn = jni_fn!(env, ReleaseStringUtfCharsFn, JNI_RELEASE_STRING_UTF_CHARS);
+    let rel_str: ReleaseStringUtfCharsFn =
+        jni_fn!(env, ReleaseStringUtfCharsFn, JNI_RELEASE_STRING_UTF_CHARS);
     let get_arr_len: GetArrayLengthFn = jni_fn!(env, GetArrayLengthFn, JNI_GET_ARRAY_LENGTH);
     let get_arr_elem: GetObjectArrayElementFn =
         jni_fn!(env, GetObjectArrayElementFn, JNI_GET_OBJECT_ARRAY_ELEMENT);
@@ -642,6 +723,7 @@ pub(super) unsafe fn enumerate_methods(
     }
 
     let c_get_declared = CString::new("getDeclaredMethods").unwrap();
+    let c_get_public = CString::new("getMethods").unwrap();
     let c_get_methods_sig = CString::new("()[Ljava/lang/reflect/Method;").unwrap();
     let c_get_name = CString::new("getName").unwrap();
     let c_str_ret = CString::new("()Ljava/lang/String;").unwrap();
@@ -652,11 +734,32 @@ pub(super) unsafe fn enumerate_methods(
     let c_get_mods = CString::new("getModifiers").unwrap();
     let c_get_mods_sig = CString::new("()I").unwrap();
 
-    let get_methods_mid = get_mid(env, class_cls, c_get_declared.as_ptr(), c_get_methods_sig.as_ptr());
+    let get_methods_mid = get_mid(
+        env,
+        class_cls,
+        c_get_declared.as_ptr(),
+        c_get_methods_sig.as_ptr(),
+    );
+    let get_public_methods_mid = get_mid(
+        env,
+        class_cls,
+        c_get_public.as_ptr(),
+        c_get_methods_sig.as_ptr(),
+    );
     let get_name_mid = get_mid(env, method_cls, c_get_name.as_ptr(), c_str_ret.as_ptr());
-    let get_params_mid = get_mid(env, method_cls, c_get_params.as_ptr(), c_get_params_sig.as_ptr());
+    let get_params_mid = get_mid(
+        env,
+        method_cls,
+        c_get_params.as_ptr(),
+        c_get_params_sig.as_ptr(),
+    );
     let get_ret_mid = get_mid(env, method_cls, c_get_ret.as_ptr(), c_get_ret_sig.as_ptr());
-    let get_mods_mid = get_mid(env, method_cls, c_get_mods.as_ptr(), c_get_mods_sig.as_ptr());
+    let get_mods_mid = get_mid(
+        env,
+        method_cls,
+        c_get_mods.as_ptr(),
+        c_get_mods_sig.as_ptr(),
+    );
     let class_get_name_mid = get_mid(env, class_cls, c_get_name.as_ptr(), c_str_ret.as_ptr());
 
     if jni_check_exc(env) {
@@ -673,53 +776,91 @@ pub(super) unsafe fn enumerate_methods(
 
     let len = get_arr_len(env, methods_array);
     let mut results = Vec::with_capacity(len as usize);
+    let mut seen = std::collections::HashSet::new();
 
-    for i in 0..len {
-        let method_obj = get_arr_elem(env, methods_array, i);
-        if method_obj.is_null() { continue; }
-
-        // getName()
-        let name_jstr = call_obj(env, method_obj, get_name_mid, ptr::null());
-        if name_jstr.is_null() { continue; }
-        let name_chars = get_str(env, name_jstr, ptr::null_mut());
-        let name = CStr::from_ptr(name_chars).to_string_lossy().to_string();
-        rel_str(env, name_jstr, name_chars);
-
-        // getModifiers()
-        let modifiers = call_int(env, method_obj, get_mods_mid, ptr::null());
-        let is_static = (modifiers & 0x0008) != 0;
-
-        // getParameterTypes() → build JNI signature
-        let param_array = call_obj(env, method_obj, get_params_mid, ptr::null());
-        let param_count = if param_array.is_null() { 0 } else { get_arr_len(env, param_array) };
-        let mut sig = String::from("(");
-
-        for j in 0..param_count {
-            let pcls = get_arr_elem(env, param_array, j);
-            if pcls.is_null() { continue; }
-            let pname_jstr = call_obj(env, pcls, class_get_name_mid, ptr::null());
-            if !pname_jstr.is_null() {
-                let pc = get_str(env, pname_jstr, ptr::null_mut());
-                let pname = CStr::from_ptr(pc).to_string_lossy().to_string();
-                rel_str(env, pname_jstr, pc);
-                sig.push_str(&java_type_to_jni(&pname));
-            }
-        }
-        sig.push(')');
-
-        // getReturnType()
-        let ret_cls = call_obj(env, method_obj, get_ret_mid, ptr::null());
-        if !ret_cls.is_null() {
-            let rname_jstr = call_obj(env, ret_cls, class_get_name_mid, ptr::null());
-            if !rname_jstr.is_null() {
-                let rc = get_str(env, rname_jstr, ptr::null_mut());
-                let rname = CStr::from_ptr(rc).to_string_lossy().to_string();
-                rel_str(env, rname_jstr, rc);
-                sig.push_str(&java_type_to_jni(&rname));
-            }
+    let mut collect_methods = |method_array: *mut std::ffi::c_void| {
+        if method_array.is_null() {
+            return;
         }
 
-        results.push(MethodInfo { name, sig, is_static });
+        let method_len = get_arr_len(env, method_array);
+        for i in 0..method_len {
+            let method_obj = get_arr_elem(env, method_array, i);
+            if method_obj.is_null() {
+                continue;
+            }
+
+            // getName()
+            let name_jstr = call_obj(env, method_obj, get_name_mid, ptr::null());
+            if name_jstr.is_null() {
+                continue;
+            }
+            let name_chars = get_str(env, name_jstr, ptr::null_mut());
+            let name = CStr::from_ptr(name_chars).to_string_lossy().to_string();
+            rel_str(env, name_jstr, name_chars);
+
+            // getModifiers()
+            let modifiers = call_int(env, method_obj, get_mods_mid, ptr::null());
+            let is_static = (modifiers & 0x0008) != 0;
+
+            // getParameterTypes() → build JNI signature
+            let param_array = call_obj(env, method_obj, get_params_mid, ptr::null());
+            let param_count = if param_array.is_null() {
+                0
+            } else {
+                get_arr_len(env, param_array)
+            };
+            let mut sig = String::from("(");
+
+            for j in 0..param_count {
+                let pcls = get_arr_elem(env, param_array, j);
+                if pcls.is_null() {
+                    continue;
+                }
+                let pname_jstr = call_obj(env, pcls, class_get_name_mid, ptr::null());
+                if !pname_jstr.is_null() {
+                    let pc = get_str(env, pname_jstr, ptr::null_mut());
+                    let pname = CStr::from_ptr(pc).to_string_lossy().to_string();
+                    rel_str(env, pname_jstr, pc);
+                    sig.push_str(&java_type_to_jni(&pname));
+                }
+            }
+            sig.push(')');
+
+            // getReturnType()
+            let ret_cls = call_obj(env, method_obj, get_ret_mid, ptr::null());
+            if !ret_cls.is_null() {
+                let rname_jstr = call_obj(env, ret_cls, class_get_name_mid, ptr::null());
+                if !rname_jstr.is_null() {
+                    let rc = get_str(env, rname_jstr, ptr::null_mut());
+                    let rname = CStr::from_ptr(rc).to_string_lossy().to_string();
+                    rel_str(env, rname_jstr, rc);
+                    sig.push_str(&java_type_to_jni(&rname));
+                }
+            }
+
+            let key = format!("{}|{}|{}", name, sig, is_static as u8);
+            if seen.insert(key) {
+                results.push(MethodInfo {
+                    name,
+                    sig,
+                    is_static,
+                });
+            }
+        }
+    };
+
+    collect_methods(methods_array);
+
+    // Add inherited public methods so object proxies can auto-resolve members like
+    // Activity.getApplicationContext() that come from a superclass/interface.
+    if !get_public_methods_mid.is_null() {
+        let public_methods_array = call_obj(env, cls, get_public_methods_mid, ptr::null());
+        if !public_methods_array.is_null() && !jni_check_exc(env) {
+            collect_methods(public_methods_array);
+        } else {
+            jni_check_exc(env);
+        }
     }
 
     // Enumerate constructors via getDeclaredConstructors()
@@ -729,7 +870,12 @@ pub(super) unsafe fn enumerate_methods(
     if !constructor_cls.is_null() && !jni_check_exc(env) {
         let c_get_ctors = CString::new("getDeclaredConstructors").unwrap();
         let c_get_ctors_sig = CString::new("()[Ljava/lang/reflect/Constructor;").unwrap();
-        let get_ctors_mid = get_mid(env, class_cls, c_get_ctors.as_ptr(), c_get_ctors_sig.as_ptr());
+        let get_ctors_mid = get_mid(
+            env,
+            class_cls,
+            c_get_ctors.as_ptr(),
+            c_get_ctors_sig.as_ptr(),
+        );
 
         if !get_ctors_mid.is_null() && !jni_check_exc(env) {
             let ctors_array = call_obj(env, cls, get_ctors_mid, ptr::null());
@@ -738,12 +884,17 @@ pub(super) unsafe fn enumerate_methods(
 
                 // Constructor.getParameterTypes() — same signature as Method.getParameterTypes()
                 let ctor_get_params_mid = get_mid(
-                    env, constructor_cls, c_get_params.as_ptr(), c_get_params_sig.as_ptr()
+                    env,
+                    constructor_cls,
+                    c_get_params.as_ptr(),
+                    c_get_params_sig.as_ptr(),
                 );
 
                 for i in 0..ctor_len {
                     let ctor_obj = get_arr_elem(env, ctors_array, i);
-                    if ctor_obj.is_null() { continue; }
+                    if ctor_obj.is_null() {
+                        continue;
+                    }
 
                     // Build signature: (params)V — constructors always return void
                     let param_array = if !ctor_get_params_mid.is_null() {
@@ -751,12 +902,18 @@ pub(super) unsafe fn enumerate_methods(
                     } else {
                         ptr::null_mut()
                     };
-                    let param_count = if param_array.is_null() { 0 } else { get_arr_len(env, param_array) };
+                    let param_count = if param_array.is_null() {
+                        0
+                    } else {
+                        get_arr_len(env, param_array)
+                    };
                     let mut sig = String::from("(");
 
                     for j in 0..param_count {
                         let pcls = get_arr_elem(env, param_array, j);
-                        if pcls.is_null() { continue; }
+                        if pcls.is_null() {
+                            continue;
+                        }
                         let pname_jstr = call_obj(env, pcls, class_get_name_mid, ptr::null());
                         if !pname_jstr.is_null() {
                             let pc = get_str(env, pname_jstr, ptr::null_mut());

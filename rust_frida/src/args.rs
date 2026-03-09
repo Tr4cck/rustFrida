@@ -1,7 +1,7 @@
 #![cfg(all(target_os = "android", target_arch = "aarch64"))]
 
-use clap::{ArgGroup, Parser};
 use crate::injection::DebugInjectMode;
+use clap::{ArgGroup, Parser};
 
 fn parse_pid(s: &str) -> std::result::Result<i32, String> {
     match s.parse::<i32>() {

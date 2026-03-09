@@ -32,12 +32,24 @@ pub(crate) fn commands() -> &'static [(&'static str, &'static str, &'static str)
         #[cfg(feature = "frida-gum")]
         {
             v.push(("stalker", "[tid]", "Frida Stalker 追踪 [frida-gum ✓]"));
-            v.push(("hfl", "<module> <offset>", "Interceptor hook 指定偏移 [frida-gum ✓]"));
+            v.push((
+                "hfl",
+                "<module> <offset>",
+                "Interceptor hook 指定偏移 [frida-gum ✓]",
+            ));
         }
         #[cfg(not(feature = "frida-gum"))]
         {
-            v.push(("stalker", "[tid]", "Frida Stalker 追踪 [--features frida-gum 启用]"));
-            v.push(("hfl", "<module> <offset>", "Interceptor hook 指定偏移 [--features frida-gum 启用]"));
+            v.push((
+                "stalker",
+                "[tid]",
+                "Frida Stalker 追踪 [--features frida-gum 启用]",
+            ));
+            v.push((
+                "hfl",
+                "<module> <offset>",
+                "Interceptor hook 指定偏移 [--features frida-gum 启用]",
+            ));
         }
         #[cfg(feature = "qbdi")]
         {
@@ -45,7 +57,11 @@ pub(crate) fn commands() -> &'static [(&'static str, &'static str, &'static str)
         }
         #[cfg(not(feature = "qbdi"))]
         {
-            v.push(("qfl", "<module> <offset>", "QBDI 追踪指定偏移 [--features qbdi 启用]"));
+            v.push((
+                "qfl",
+                "<module> <offset>",
+                "QBDI 追踪指定偏移 [--features qbdi 启用]",
+            ));
         }
         v
     })

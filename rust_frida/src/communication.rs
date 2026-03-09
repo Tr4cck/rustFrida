@@ -48,9 +48,22 @@ impl<T: Clone> SyncChannel<T> {
     }
 
     /// 持锁等待值到来或超时，返回值的克隆。
-    fn wait_for_value(&self, guard: std::sync::MutexGuard<'_, Option<T>>, dur: Duration) -> Option<T> {
-        match self.cvar.wait_timeout_while(guard, dur, |val| val.is_none()) {
-            Ok((guard, timeout)) => if timeout.timed_out() { None } else { guard.clone() },
+    fn wait_for_value(
+        &self,
+        guard: std::sync::MutexGuard<'_, Option<T>>,
+        dur: Duration,
+    ) -> Option<T> {
+        match self
+            .cvar
+            .wait_timeout_while(guard, dur, |val| val.is_none())
+        {
+            Ok((guard, timeout)) => {
+                if timeout.timed_out() {
+                    None
+                } else {
+                    guard.clone()
+                }
+            }
             Err(_) => None,
         }
     }
@@ -112,7 +125,9 @@ fn handle_socket_connection(stream: UnixStream) {
                 log_error!("读取连接失败: {}", e);
                 if e.kind() == std::io::ErrorKind::ConnectionReset {
                     log_error!("可能原因: 目标进程权限不足 / agent 崩溃 / SELinux 拦截");
-                    log_error!("排查: dmesg | grep -i 'deny\\|avc'  或  logcat | grep -E 'FATAL|crash'");
+                    log_error!(
+                        "排查: dmesg | grep -i 'deny\\|avc'  或  logcat | grep -E 'FATAL|crash'"
+                    );
                 }
                 break;
             }

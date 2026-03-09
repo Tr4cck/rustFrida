@@ -178,11 +178,8 @@ pub(crate) unsafe fn extract_pointer_address(
     if let Some(a) = arg.to_u64(ctx) {
         return Ok(a);
     }
-    let msg = std::ffi::CString::new(format!(
-        "{}() argument must be a pointer",
-        func_name
-    ))
-    .unwrap_or_default();
+    let msg = std::ffi::CString::new(format!("{}() argument must be a pointer", func_name))
+        .unwrap_or_default();
     Err(ffi::JS_ThrowTypeError(ctx, msg.as_ptr()))
 }
 
@@ -249,8 +246,7 @@ pub(crate) unsafe fn invoke_hook_callback_common(
     // 从 bytes 提取 JS callback value，dup 增加引用计数。
     // 回调执行期间 re-hook 可能替换并释放 registry 中的旧回调，
     // dup 确保 JS_Call 期间函数不会被释放（防止 UAF）。
-    let callback: ffi::JSValue =
-        std::ptr::read(callback_bytes.as_ptr() as *const ffi::JSValue);
+    let callback: ffi::JSValue = std::ptr::read(callback_bytes.as_ptr() as *const ffi::JSValue);
     let callback_dup = ffi::qjs_dup_value(ctx, callback);
 
     // 构建 JS 上下文对象（hook 类型相关）

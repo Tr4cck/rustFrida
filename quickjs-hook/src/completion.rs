@@ -12,7 +12,9 @@ fn parse_json_string_array(json: &str) -> Vec<String> {
     // Consume leading whitespace and '['
     loop {
         match chars.peek() {
-            Some(&c) if c.is_whitespace() || c == '[' => { chars.next(); }
+            Some(&c) if c.is_whitespace() || c == '[' => {
+                chars.next();
+            }
             _ => break,
         }
     }
@@ -21,7 +23,9 @@ fn parse_json_string_array(json: &str) -> Vec<String> {
         // Skip whitespace and commas between elements
         loop {
             match chars.peek() {
-                Some(&c) if c.is_whitespace() || c == ',' => { chars.next(); }
+                Some(&c) if c.is_whitespace() || c == ',' => {
+                    chars.next();
+                }
                 _ => break,
             }
         }
@@ -40,7 +44,10 @@ fn parse_json_string_array(json: &str) -> Vec<String> {
                             Some('n') => s.push('\n'),
                             Some('r') => s.push('\r'),
                             Some('t') => s.push('\t'),
-                            Some(c) => { s.push('\\'); s.push(c); }
+                            Some(c) => {
+                                s.push('\\');
+                                s.push(c);
+                            }
                             None => break,
                         },
                         Some('"') => break, // end of string
@@ -51,7 +58,9 @@ fn parse_json_string_array(json: &str) -> Vec<String> {
                     result.push(s);
                 }
             }
-            _ => { chars.next(); } // skip unexpected characters
+            _ => {
+                chars.next();
+            } // skip unexpected characters
         }
     }
 

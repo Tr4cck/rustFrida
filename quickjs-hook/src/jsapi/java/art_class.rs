@@ -6,12 +6,12 @@
 
 use std::sync::OnceLock;
 
+use super::art_method::get_art_field_spec;
+use super::jni_core::*;
+use super::safe_mem::{refresh_mem_regions, safe_read_u16, safe_read_u32, safe_read_u64};
+use super::PAC_STRIP_MASK;
 use crate::jsapi::console::output_message;
 use crate::jsapi::module::libart_dlsym;
-use super::PAC_STRIP_MASK;
-use super::jni_core::*;
-use super::art_method::get_art_field_spec;
-use super::safe_mem::{refresh_mem_regions, safe_read_u64, safe_read_u32, safe_read_u16};
 
 // ============================================================================
 // ArtClass 布局规格 — 动态探测 (Frida-style)
@@ -36,7 +36,9 @@ static ART_CLASS_SPEC: OnceLock<Option<ArtClassSpec>> = OnceLock::new();
 
 /// 获取 ArtClass 偏移规格（首次调用时探测并缓存）
 pub(super) fn get_art_class_spec(env: JniEnv) -> Option<&'static ArtClassSpec> {
-    ART_CLASS_SPEC.get_or_init(|| probe_art_class_spec(env)).as_ref()
+    ART_CLASS_SPEC
+        .get_or_init(|| probe_art_class_spec(env))
+        .as_ref()
 }
 
 /// 探测 ArtClass 布局偏移（对标 Frida getArtClassSpec）
@@ -97,8 +99,12 @@ fn probe_art_class_spec(env: JniEnv) -> Option<ArtClassSpec> {
         let instance_field_id =
             get_field_id(env, cls_global, c_name.as_ptr(), c_string_sig.as_ptr());
         jni_check_exc(env);
-        let method_id =
-            get_method_id(env, cls_global, c_get_name.as_ptr(), c_get_name_sig.as_ptr());
+        let method_id = get_method_id(
+            env,
+            cls_global,
+            c_get_name.as_ptr(),
+            c_get_name_sig.as_ptr(),
+        );
         jni_check_exc(env);
 
         if static_field_id.is_null() && instance_field_id.is_null() && method_id.is_null() {
@@ -115,12 +121,10 @@ fn probe_art_class_spec(env: JniEnv) -> Option<ArtClassSpec> {
         // Step 3: 解码 ID → 真实指针
         // jfieldID 在 API 30+ 可能是 opaque index 而非 ArtField*，需解码
         // jmethodID 可能是 opaque (API 30+)，使用 decode_method_id
-        let art_field_static = super::reflect::decode_field_id(
-            env, cls_global, static_field_id as u64, true,
-        );
-        let art_field_instance = super::reflect::decode_field_id(
-            env, cls_global, instance_field_id as u64, false,
-        );
+        let art_field_static =
+            super::reflect::decode_field_id(env, cls_global, static_field_id as u64, true);
+        let art_field_instance =
+            super::reflect::decode_field_id(env, cls_global, instance_field_id as u64, false);
         let art_method_instance =
             super::reflect::decode_method_id(env, cls_global, method_id as u64, false);
 
@@ -137,9 +141,13 @@ fn probe_art_class_spec(env: JniEnv) -> Option<ArtClassSpec> {
 
         let scan_result = with_runnable_thread(env, || {
             scan_class_layout(
-                env, cls_global,
-                art_field_static, art_field_instance, art_method_instance,
-                f_entry_size, m_entry_size,
+                env,
+                cls_global,
+                art_field_static,
+                art_field_instance,
+                art_method_instance,
+                f_entry_size,
+                m_entry_size,
             )
         });
 
@@ -149,8 +157,10 @@ fn probe_art_class_spec(env: JniEnv) -> Option<ArtClassSpec> {
 
         output_message(&format!(
             "[art class] 探测成功: ifields={}, sfields={}, methods={}, copied_methods={}",
-            spec.ifields_offset, spec.sfields_offset,
-            spec.methods_offset, spec.copied_methods_offset
+            spec.ifields_offset,
+            spec.sfields_offset,
+            spec.methods_offset,
+            spec.copied_methods_offset
         ));
 
         Some(spec)
@@ -242,7 +252,8 @@ unsafe fn scan_class_layout(
         if candidate < MAX_OFFSET {
             ifield_offset = Some(candidate);
             output_message(&format!(
-                "[art class] ifields_ 推算: sfields-8 = Class+{:#x}", candidate
+                "[art class] ifields_ 推算: sfields-8 = Class+{:#x}",
+                candidate
             ));
         }
     } else if ifield_offset.is_some() && sfield_offset.is_none() {
@@ -250,7 +261,8 @@ unsafe fn scan_class_layout(
         if candidate < MAX_OFFSET {
             sfield_offset = Some(candidate);
             output_message(&format!(
-                "[art class] sfields_ 推算: ifields+8 = Class+{:#x}", candidate
+                "[art class] sfields_ 推算: ifields+8 = Class+{:#x}",
+                candidate
             ));
         }
     }
@@ -417,14 +429,12 @@ where
     }
 
     // Strategy 1: dlsym TransitionFromSuspendedToRunnable
-    let to_runnable_sym = libart_dlsym(
-        "_ZN3art6Thread33TransitionFromSuspendedToRunnableEv"
-    );
+    let to_runnable_sym = libart_dlsym("_ZN3art6Thread33TransitionFromSuspendedToRunnableEv");
 
     if !to_runnable_sym.is_null() {
         // 尝试找反向转换函数
         let to_suspended_sym = libart_dlsym(
-            "_ZN3art6Thread40TransitionToSuspendedAndRunCheckpointsENS_11ThreadStateE"
+            "_ZN3art6Thread40TransitionToSuspendedAndRunCheckpointsENS_11ThreadStateE",
         );
 
         type ToRunnableFn = unsafe extern "C" fn(this: u64) -> u32;

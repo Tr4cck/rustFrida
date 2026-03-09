@@ -21,11 +21,11 @@ use std::ffi::CString;
 
 use crate::jsapi::callback_util::{dup_callback_to_bytes, with_registry, with_registry_mut};
 
+use super::art_controller::{ensure_art_controller_initialized, stealth_flag};
+use super::art_method::*;
+use super::callback::*;
 use super::jni_core::*;
 use super::reflect::*;
-use super::art_method::*;
-use super::art_controller::{ensure_art_controller_initialized, stealth_flag};
-use super::callback::*;
 
 // ============================================================================
 // JS API: Java.hook(class, method, sig, callback)
@@ -119,13 +119,14 @@ pub(super) unsafe extern "C" fn js_java_hook(
     };
 
     // 解析 ArtMethod
-    let (art_method, is_static) = match resolve_art_method(env, &class_name, &method_name, &actual_sig, force_static) {
-        Ok(r) => r,
-        Err(msg) => {
-            let err = CString::new(msg).unwrap();
-            return ffi::JS_ThrowInternalError(ctx, err.as_ptr());
-        }
-    };
+    let (art_method, is_static) =
+        match resolve_art_method(env, &class_name, &method_name, &actual_sig, force_static) {
+            Ok(r) => r,
+            Err(msg) => {
+                let err = CString::new(msg).unwrap();
+                return ffi::JS_ThrowInternalError(ctx, err.as_ptr());
+            }
+        };
 
     // 检查是否已 hook — 如果是，直接替换回调（无需 unhook+rehook）
     init_java_registry();
@@ -166,12 +167,9 @@ pub(super) unsafe extern "C" fn js_java_hook(
     // ================================================================
     // Step 1: fetchArtMethod — 读取原始方法的 4 个关键字段
     // ================================================================
-    let original_access_flags = std::ptr::read_volatile(
-        (art_method as usize + spec.access_flags_offset) as *const u32,
-    );
-    let original_data = std::ptr::read_volatile(
-        (art_method as usize + data_off) as *const u64,
-    );
+    let original_access_flags =
+        std::ptr::read_volatile((art_method as usize + spec.access_flags_offset) as *const u32);
+    let original_data = std::ptr::read_volatile((art_method as usize + data_off) as *const u64);
     let original_entry_point = read_entry_point(art_method, ep_offset);
 
     output_message(&format!(
@@ -205,16 +203,13 @@ pub(super) unsafe extern "C" fn js_java_hook(
             let err = CString::new("malloc failed for ArtMethod backup clone").unwrap();
             return ffi::JS_ThrowInternalError(ctx, err.as_ptr());
         }
-        std::ptr::copy_nonoverlapping(
-            art_method as *const u8,
-            ptr as *mut u8,
-            clone_size,
-        );
+        std::ptr::copy_nonoverlapping(art_method as *const u8, ptr as *mut u8, clone_size);
         ptr as u64
     };
 
     output_message(&format!(
-        "[java hook] Step 3 clone: backup={:#x} (size={})", clone_addr, clone_size
+        "[java hook] Step 3 clone: backup={:#x} (size={})",
+        clone_addr, clone_size
     ));
 
     // 发现 ART bridge 函数（惰性，一次性）
@@ -232,11 +227,13 @@ pub(super) unsafe extern "C" fn js_java_hook(
         let cls = find_class_safe(env, &class_name);
         if cls.is_null() {
             libc::free(clone_addr as *mut std::ffi::c_void);
-            let err = CString::new(format!("FindClass('{}') failed for global ref", class_name)).unwrap();
+            let err =
+                CString::new(format!("FindClass('{}') failed for global ref", class_name)).unwrap();
             return ffi::JS_ThrowInternalError(ctx, err.as_ptr());
         }
         let new_global_ref: NewGlobalRefFn = jni_fn!(env, NewGlobalRefFn, JNI_NEW_GLOBAL_REF);
-        let delete_local_ref: DeleteLocalRefFn = jni_fn!(env, DeleteLocalRefFn, JNI_DELETE_LOCAL_REF);
+        let delete_local_ref: DeleteLocalRefFn =
+            jni_fn!(env, DeleteLocalRefFn, JNI_DELETE_LOCAL_REF);
         let gref = new_global_ref(env, cls);
         delete_local_ref(env, cls);
         gref as usize
@@ -292,11 +289,7 @@ pub(super) unsafe extern "C" fn js_java_hook(
             let err = CString::new("malloc failed for replacement ArtMethod").unwrap();
             return ffi::JS_ThrowInternalError(ctx, err.as_ptr());
         }
-        std::ptr::copy_nonoverlapping(
-            art_method as *const u8,
-            ptr as *mut u8,
-            clone_size,
-        );
+        std::ptr::copy_nonoverlapping(art_method as *const u8, ptr as *mut u8, clone_size);
 
         let repl = ptr as usize;
 
@@ -304,18 +297,9 @@ pub(super) unsafe extern "C" fn js_java_hook(
             & !(K_ACC_CRITICAL_NATIVE | K_ACC_FAST_NATIVE | K_ACC_NTERP_ENTRY_POINT_FAST_PATH))
             | K_ACC_NATIVE
             | k_acc_compile_dont_bother();
-        std::ptr::write_volatile(
-            (repl + spec.access_flags_offset) as *mut u32,
-            repl_flags,
-        );
-        std::ptr::write_volatile(
-            (repl + data_off) as *mut u64,
-            thunk as u64,
-        );
-        std::ptr::write_volatile(
-            (repl + ep_offset) as *mut u64,
-            jni_trampoline,
-        );
+        std::ptr::write_volatile((repl + spec.access_flags_offset) as *mut u32, repl_flags);
+        std::ptr::write_volatile((repl + data_off) as *mut u64, thunk as u64);
+        std::ptr::write_volatile((repl + ep_offset) as *mut u64, jni_trampoline);
         hook_ffi::hook_flush_cache(ptr, clone_size);
 
         output_message(&format!(
@@ -354,7 +338,8 @@ pub(super) unsafe extern "C" fn js_java_hook(
             new_flags,
         );
         output_message(&format!(
-            "[java hook] Step 5 original flags: {:#x} → {:#x}", original_access_flags, new_flags
+            "[java hook] Step 5 original flags: {:#x} → {:#x}",
+            original_access_flags, new_flags
         ));
     }
 
@@ -368,7 +353,8 @@ pub(super) unsafe extern "C" fn js_java_hook(
     // ================================================================
     set_replacement_method(art_method, replacement_addr as u64);
     output_message(&format!(
-        "[java hook] Step 8: replacedMethods.set({:#x}, {:#x})", art_method, replacement_addr
+        "[java hook] Step 8: replacedMethods.set({:#x}, {:#x})",
+        art_method, replacement_addr
     ));
 
     // Debug: verify table was populated and scan works
@@ -505,7 +491,11 @@ pub(super) unsafe extern "C" fn js_java_hook(
     // 预缓存字段信息
     cache_fields_for_class(env, &class_name);
 
-    let strategy = if has_independent_code { "compiled+router" } else { "shared_stub" };
+    let strategy = if has_independent_code {
+        "compiled+router"
+    } else {
+        "shared_stub"
+    };
     output_message(&format!(
         "[java hook] 完成: {}.{}{} (ArtMethod={:#x}, strategy={})",
         class_name, method_name, actual_sig, art_method, strategy
@@ -535,8 +525,7 @@ pub(super) unsafe extern "C" fn js_java_unhook(
     if argc < 3 {
         return ffi::JS_ThrowTypeError(
             ctx,
-            b"Java.unhook() requires 3 arguments: class, method, signature\0".as_ptr()
-                as *const _,
+            b"Java.unhook() requires 3 arguments: class, method, signature\0".as_ptr() as *const _,
         );
     }
 
@@ -595,10 +584,7 @@ pub(super) unsafe extern "C" fn js_java_unhook(
     let art_method_addr = match art_method_addr {
         Some(am) => am,
         None => {
-            return ffi::JS_ThrowInternalError(
-                ctx,
-                b"method not hooked\0".as_ptr() as *const _,
-            );
+            return ffi::JS_ThrowInternalError(ctx, b"method not hooked\0".as_ptr() as *const _);
         }
     };
 
@@ -611,16 +597,16 @@ pub(super) unsafe extern "C" fn js_java_unhook(
     let hook_data = match hook_data {
         Some(d) => d,
         None => {
-            return ffi::JS_ThrowInternalError(
-                ctx,
-                b"method not hooked\0".as_ptr() as *const _,
-            );
+            return ffi::JS_ThrowInternalError(ctx, b"method not hooked\0".as_ptr() as *const _);
         }
     };
 
     // 统一 unhook 流程
     match &hook_data.hook_type {
-        HookType::Replaced { replacement_addr, per_method_hook_target } => {
+        HookType::Replaced {
+            replacement_addr,
+            per_method_hook_target,
+        } => {
             output_message(&format!(
                 "[java unhook] 开始: art_method={:#x}, replacement={:#x}, per_method={:?}",
                 hook_data.art_method, replacement_addr, per_method_hook_target
@@ -634,7 +620,8 @@ pub(super) unsafe extern "C" fn js_java_unhook(
             if let Some(target) = per_method_hook_target {
                 hook_ffi::hook_remove(*target as *mut std::ffi::c_void);
                 output_message(&format!(
-                    "[java unhook] Step 2: Layer 3 hook 已移除: {:#x}", target
+                    "[java unhook] Step 2: Layer 3 hook 已移除: {:#x}",
+                    target
                 ));
             }
 
@@ -703,7 +690,8 @@ pub(super) unsafe extern "C" fn js_java_unhook(
     ffi::qjs_free_value(js_ctx, callback);
 
     output_message(&format!(
-        "[java unhook] 完成: {}.{}{}", class_name, method_name, actual_sig
+        "[java unhook] 完成: {}.{}{}",
+        class_name, method_name, actual_sig
     ));
 
     JSValue::bool(true).raw()

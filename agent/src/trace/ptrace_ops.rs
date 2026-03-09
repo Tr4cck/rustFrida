@@ -40,7 +40,10 @@ pub(crate) fn set_reg(pid: i32, regs: &mut UserRegs) -> Result<()> {
         &mut iov as *const _ as usize,
     );
     if ret == -1 {
-        return Err(format!("设置寄存器失败: {}", std::io::Error::last_os_error()));
+        return Err(format!(
+            "设置寄存器失败: {}",
+            std::io::Error::last_os_error()
+        ));
     }
     Ok(())
 }
@@ -49,7 +52,8 @@ pub(crate) fn attach_to_thread(thread_id: i32) -> Result<()> {
     match gum_libc_ptrace(PTRACE_ATTACH, thread_id, 0, 0) {
         res if res >= 0 => {
             let mut status: usize = 0;
-            let wait_result = gum_libc_waitpid(thread_id, &mut status as *mut _ as usize, 0x40000000);
+            let wait_result =
+                gum_libc_waitpid(thread_id, &mut status as *mut _ as usize, 0x40000000);
             if wait_result < 0 {
                 return Err("waitpid failed!!!!".to_string() + &(-wait_result).to_string());
             }

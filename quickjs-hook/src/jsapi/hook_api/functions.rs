@@ -67,8 +67,7 @@ pub(crate) unsafe extern "C" fn js_hook(
 
     if trampoline.is_null() {
         // hook 安装失败，释放 JS 回调引用
-        let callback: ffi::JSValue =
-            std::ptr::read(callback_bytes.as_ptr() as *const ffi::JSValue);
+        let callback: ffi::JSValue = std::ptr::read(callback_bytes.as_ptr() as *const ffi::JSValue);
         ffi::qjs_free_value(ctx, callback);
         return ffi::JS_ThrowInternalError(
             ctx,

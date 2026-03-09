@@ -4,11 +4,11 @@ use crate::communication::write_stream;
 /// ARM64 分支指令类型
 #[derive(Debug, Clone, Copy)]
 enum Arm64BranchType {
-    UnconditionalBranch { target: usize },                  // B, BL
-    ConditionalBranch { taken: usize, not_taken: usize },   // B.cond
-    CompareBranch { taken: usize, not_taken: usize },       // CBZ, CBNZ
-    TestBitBranch { taken: usize, not_taken: usize },       // TBZ, TBNZ
-    IndirectBranch { target: usize },                       // BR, BLR, RET
+    UnconditionalBranch { target: usize },                // B, BL
+    ConditionalBranch { taken: usize, not_taken: usize }, // B.cond
+    CompareBranch { taken: usize, not_taken: usize },     // CBZ, CBNZ
+    TestBitBranch { taken: usize, not_taken: usize },     // TBZ, TBNZ
+    IndirectBranch { target: usize },                     // BR, BLR, RET
 }
 
 /// ARM64 指令 opcodes 常量
@@ -175,7 +175,11 @@ fn parse_indirect_branch(instr: u32, regs: &UserRegs) -> Option<Arm64BranchType>
         }
         RET_OPCODE => {
             let rn = ((instr >> 5) & 0x1F) as usize;
-            let target = if rn == 31 { regs.regs[30] } else { regs.regs[rn] };
+            let target = if rn == 31 {
+                regs.regs[30]
+            } else {
+                regs.regs[rn]
+            };
             Some(Arm64BranchType::IndirectBranch { target })
         }
         _ => None,
@@ -189,22 +193,22 @@ fn arm64_cond_pass(cond: u8, pstate: usize) -> bool {
     let c = (pstate >> 29) & 1;
     let v = (pstate >> 28) & 1;
     match cond {
-        0x0 => z == 1,           // EQ
-        0x1 => z == 0,           // NE
-        0x2 => c == 1,           // CS/HS
-        0x3 => c == 0,           // CC/LO
-        0x4 => n == 1,           // MI
-        0x5 => n == 0,           // PL
-        0x6 => v == 1,           // VS
-        0x7 => v == 0,           // VC
-        0x8 => c == 1 && z == 0, // HI
-        0x9 => c == 0 || z == 1, // LS
-        0xA => n == v,           // GE
-        0xB => n != v,           // LT
+        0x0 => z == 1,             // EQ
+        0x1 => z == 0,             // NE
+        0x2 => c == 1,             // CS/HS
+        0x3 => c == 0,             // CC/LO
+        0x4 => n == 1,             // MI
+        0x5 => n == 0,             // PL
+        0x6 => v == 1,             // VS
+        0x7 => v == 0,             // VC
+        0x8 => c == 1 && z == 0,   // HI
+        0x9 => c == 0 || z == 1,   // LS
+        0xA => n == v,             // GE
+        0xB => n != v,             // LT
         0xC => z == 0 && (n == v), // GT
         0xD => z == 1 || (n != v), // LE
-        0xE => true,             // AL
-        0xF => false,            // NV (保留)
+        0xE => true,               // AL
+        0xF => false,              // NV (保留)
         _ => false,
     }
 }
@@ -217,7 +221,11 @@ fn resolve_branch_target(branch_type: Arm64BranchType, instr: u32, regs: &UserRe
 
         Arm64BranchType::ConditionalBranch { taken, not_taken } => {
             let cond = (instr & 0xF) as u8;
-            if arm64_cond_pass(cond, regs.pstate) { taken } else { not_taken }
+            if arm64_cond_pass(cond, regs.pstate) {
+                taken
+            } else {
+                not_taken
+            }
         }
 
         Arm64BranchType::CompareBranch { taken, not_taken } => {
@@ -225,7 +233,11 @@ fn resolve_branch_target(branch_type: Arm64BranchType, instr: u32, regs: &UserRe
             let val = regs.regs[rt];
             let is_cbz = (instr & arm64_opcodes::CBZ_CBNZ_MASK) == arm64_opcodes::CBZ_VALUE;
             let zero = val == 0;
-            if (is_cbz && zero) || (!is_cbz && !zero) { taken } else { not_taken }
+            if (is_cbz && zero) || (!is_cbz && !zero) {
+                taken
+            } else {
+                not_taken
+            }
         }
 
         Arm64BranchType::TestBitBranch { taken, not_taken } => {
@@ -237,7 +249,11 @@ fn resolve_branch_target(branch_type: Arm64BranchType, instr: u32, regs: &UserRe
             let val = regs.regs[rt] as u64;
             let bit_set = ((val >> bit_ix) & 1) != 0;
             let is_tbz = (instr & arm64_opcodes::CBZ_CBNZ_MASK) == arm64_opcodes::TBZ_VALUE;
-            if (is_tbz && !bit_set) || (!is_tbz && bit_set) { taken } else { not_taken }
+            if (is_tbz && !bit_set) || (!is_tbz && bit_set) {
+                taken
+            } else {
+                not_taken
+            }
         }
     }
 }

@@ -6,11 +6,11 @@
 
 use std::sync::OnceLock;
 
-use crate::jsapi::console::output_message;
 use super::jni_core::get_android_api_level;
 use super::jni_core::JniEnv;
-use super::PAC_STRIP_MASK;
 use super::safe_mem::{refresh_mem_regions, safe_read_u64};
+use super::PAC_STRIP_MASK;
+use crate::jsapi::console::output_message;
 
 // ============================================================================
 // ManagedStack 布局规格 — 按 API level 硬编码 (对标 Frida getManagedStackSpec)
@@ -37,9 +37,15 @@ pub(super) fn get_managed_stack_spec() -> &'static ManagedStackSpec {
     MANAGED_STACK_SPEC.get_or_init(|| {
         let api_level = get_android_api_level();
         let spec = if api_level >= 23 {
-            ManagedStackSpec { top_quick_frame_offset: 0, link_offset: 8 }
+            ManagedStackSpec {
+                top_quick_frame_offset: 0,
+                link_offset: 8,
+            }
         } else {
-            ManagedStackSpec { top_quick_frame_offset: 16, link_offset: 0 }
+            ManagedStackSpec {
+                top_quick_frame_offset: 16,
+                link_offset: 0,
+            }
         };
         output_message(&format!(
             "[managed stack] API {}: top_quick_frame={}, link={}",
@@ -78,7 +84,9 @@ pub(super) static ART_THREAD_SPEC: OnceLock<Option<ArtThreadSpec>> = OnceLock::n
 
 /// 获取 ArtThread 偏移规格（首次调用时探测并缓存）
 pub(super) fn get_art_thread_spec(env: JniEnv) -> Option<&'static ArtThreadSpec> {
-    ART_THREAD_SPEC.get_or_init(|| probe_art_thread_spec(env)).as_ref()
+    ART_THREAD_SPEC
+        .get_or_init(|| probe_art_thread_spec(env))
+        .as_ref()
 }
 
 /// 探测 ArtThread 布局偏移（对标 Frida _getArtThreadSpec）
@@ -121,7 +129,8 @@ fn probe_art_thread_spec(env: JniEnv) -> Option<ArtThreadSpec> {
         if val_stripped == env_stripped {
             jni_env_offset = Some(offset);
             output_message(&format!(
-                "[art thread] 找到 jni_env 在 Thread+{} (value={:#x})", offset, val
+                "[art thread] 找到 jni_env 在 Thread+{} (value={:#x})",
+                offset, val
             ));
             break;
         }

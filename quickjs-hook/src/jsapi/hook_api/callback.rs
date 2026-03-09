@@ -42,7 +42,11 @@ pub(crate) unsafe extern "C" fn hook_callback_wrapper(
             Some(d) => d,
             None => return,
         };
-        (hook_data.ctx, hook_data.callback_bytes, hook_data.trampoline)
+        (
+            hook_data.ctx,
+            hook_data.callback_bytes,
+            hook_data.trampoline,
+        )
     }; // HOOK_REGISTRY lock released here
 
     // Set global state for js_native_call_original
@@ -68,7 +72,8 @@ pub(crate) unsafe extern "C" fn hook_callback_wrapper(
             set_js_u64_property(ctx, js_ctx, "trampoline", trampoline);
 
             let cname = CString::new("callOriginal").unwrap();
-            let func_val = ffi::qjs_new_cfunction(ctx, Some(js_native_call_original), cname.as_ptr(), 0);
+            let func_val =
+                ffi::qjs_new_cfunction(ctx, Some(js_native_call_original), cname.as_ptr(), 0);
             JSValue(js_ctx).set_property(ctx, "callOriginal", JSValue(func_val));
 
             js_ctx

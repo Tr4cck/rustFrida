@@ -1,6 +1,9 @@
 //! ExecMem - 可读写可执行内存分配器
 
-use libc::{mmap, munmap, sysconf, MAP_ANONYMOUS, MAP_PRIVATE, PROT_EXEC, PROT_READ, PROT_WRITE, _SC_PAGESIZE};
+use libc::{
+    mmap, munmap, sysconf, MAP_ANONYMOUS, MAP_PRIVATE, PROT_EXEC, PROT_READ, PROT_WRITE,
+    _SC_PAGESIZE,
+};
 use std::io::Error;
 use std::ptr;
 use std::ptr::null_mut;
@@ -30,7 +33,12 @@ impl ExecMem {
             if ptr == libc::MAP_FAILED {
                 return Err(Error::last_os_error().to_string());
             }
-            Ok(ExecMem { ptr: ptr as *mut u8, size: page_size, used: 0, page_size })
+            Ok(ExecMem {
+                ptr: ptr as *mut u8,
+                size: page_size,
+                used: 0,
+                page_size,
+            })
         }
     }
 
@@ -38,7 +46,7 @@ impl ExecMem {
     pub fn write(&mut self, data: &[u8]) -> Result<*mut u8> {
         if self.used + data.len() > self.size {
             // self.grow()?;
-            return Err(String::from("剩余exe_mem耗尽"))
+            return Err(String::from("剩余exe_mem耗尽"));
         }
         unsafe {
             let dest = self.ptr.add(self.used);
@@ -72,8 +80,12 @@ impl ExecMem {
                 0,
             );
             if new_ptr == libc::MAP_FAILED {
-                return Err(format!("无法扩展内存 ({}->{}): {}",
-                    self.size, new_size, Error::last_os_error()));
+                return Err(format!(
+                    "无法扩展内存 ({}->{}): {}",
+                    self.size,
+                    new_size,
+                    Error::last_os_error()
+                ));
             }
             // 拷贝旧数据
             ptr::copy_nonoverlapping(self.ptr, new_ptr as *mut u8, self.used);
@@ -90,12 +102,14 @@ impl ExecMem {
             munmap(self.ptr as *mut _, self.size);
         }
     }
-    pub fn current_addr(&self) -> usize { unsafe { self.ptr.add(self.used) as usize } }
+    pub fn current_addr(&self) -> usize {
+        unsafe { self.ptr.add(self.used) as usize }
+    }
 
     pub fn external_write_instruct(&mut self) -> usize {
         unsafe {
             let result = self.ptr.add(self.used) as usize;
-            self.used+=4;
+            self.used += 4;
             result
         }
     }

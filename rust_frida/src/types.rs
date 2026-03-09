@@ -151,13 +151,13 @@ define_string_table!(
 
 // 使用宏定义函数列表
 define_libc_functions!(
-    malloc,     // 用于分配内存
-    free,       // 用于释放内存
-    socketpair, // 用于创建已连接的套接字对
-    write,      // 用于发送数据
-    close,      // 用于关闭套接字
-    mmap,       // 用于内存映射
-    munmap,     // 用于释放内存映射
+    malloc,       // 用于分配内存
+    free,         // 用于释放内存
+    socketpair,   // 用于创建已连接的套接字对
+    write,        // 用于发送数据
+    close,        // 用于关闭套接字
+    mmap,         // 用于内存映射
+    munmap,       // 用于释放内存映射
     memfd_create, // 用于创建匿名内存文件
     pthread_create,
     pthread_detach,
@@ -176,8 +176,8 @@ define_dl_functions!(
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct AgentArgs {
-    pub(crate) table: u64,   // *const StringTable（目标进程内地址）
-    pub(crate) ctrl_fd: i32, // socketpair fd1（agent 端）
+    pub(crate) table: u64,       // *const StringTable（目标进程内地址）
+    pub(crate) ctrl_fd: i32,     // socketpair fd1（agent 端）
     pub(crate) agent_memfd: i32, // 目标进程内的 agent.so memfd
 }
 

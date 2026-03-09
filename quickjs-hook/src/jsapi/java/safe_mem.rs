@@ -29,25 +29,33 @@ pub(super) fn is_readable(addr: u64, len: usize) -> bool {
     let end = addr + len as u64;
     MEM_REGIONS.with(|r| {
         let regions = r.borrow();
-        regions.iter().any(|reg| addr >= reg.start && end <= reg.end)
+        regions
+            .iter()
+            .any(|reg| addr >= reg.start && end <= reg.end)
     })
 }
 
 /// 安全读取 u64，地址无效时返回 0
 pub(super) unsafe fn safe_read_u64(addr: u64) -> u64 {
-    if !is_readable(addr, 8) { return 0; }
+    if !is_readable(addr, 8) {
+        return 0;
+    }
     std::ptr::read_unaligned(addr as *const u64)
 }
 
 /// 安全读取 u32，地址无效时返回 0
 pub(super) unsafe fn safe_read_u32(addr: u64) -> u32 {
-    if !is_readable(addr, 4) { return 0; }
+    if !is_readable(addr, 4) {
+        return 0;
+    }
     std::ptr::read_unaligned(addr as *const u32)
 }
 
 /// 安全读取 u16，地址无效时返回 0
 pub(super) unsafe fn safe_read_u16(addr: u64) -> u16 {
-    if !is_readable(addr, 2) { return 0; }
+    if !is_readable(addr, 2) {
+        return 0;
+    }
     std::ptr::read_unaligned(addr as *const u16)
 }
 

@@ -31,9 +31,10 @@ pub(crate) unsafe fn add_cfunction_to_object(
 /// 使用 `String::from_utf8` 快速路径，仅在内容包含非 UTF-8 字节时回退到 lossy 转换。
 pub(crate) fn read_proc_self_maps() -> Option<String> {
     let bytes = std::fs::read("/proc/self/maps").ok()?;
-    Some(String::from_utf8(bytes).unwrap_or_else(|e| {
-        String::from_utf8_lossy(e.as_bytes()).into_owned()
-    }))
+    Some(
+        String::from_utf8(bytes)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+    )
 }
 
 /// Check if [addr, addr+size) is accessible using mincore(2).

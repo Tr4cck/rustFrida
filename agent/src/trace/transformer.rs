@@ -1,12 +1,15 @@
-use super::UserRegs;
 use super::arm64_analysis::{is_arm64_branch, is_arm64_call, resolve_next_addr};
-use super::arm64_codegen::{gen_mov_reg_addr, gen_jump_to_transformer};
+use super::arm64_codegen::{gen_jump_to_transformer, gen_mov_reg_addr};
 use super::ptrace_ops::{attach_to_thread, get_registers, set_reg};
+use super::UserRegs;
 use crate::arm64_relocator;
-use crate::exec_mem::ExecMem;
 use crate::communication::write_stream;
+use crate::exec_mem::ExecMem;
 use crate::gumlibc::gum_libc_ptrace;
-use libc::{c_int, mmap, pid_t, MAP_ANONYMOUS, MAP_PRIVATE, PROT_READ, PROT_WRITE, CLONE_SETTLS, CLONE_VM, PTRACE_DETACH};
+use libc::{
+    c_int, mmap, pid_t, CLONE_SETTLS, CLONE_VM, MAP_ANONYMOUS, MAP_PRIVATE, PROT_READ, PROT_WRITE,
+    PTRACE_DETACH,
+};
 use once_cell::unsync::Lazy;
 use std::ptr::null_mut;
 use std::sync::Mutex;
@@ -64,7 +67,10 @@ pub fn transformer_global(addr: usize) -> Result<usize> {
         INSTRUCT_PTR = addr as *const u32;
         let closure_result = {
             while !is_arm64_branch(*INSTRUCT_PTR) {
-                arm64_relocator::relocate_one_a64(INSTRUCT_PTR as usize, exe_mem.external_write_instruct());
+                arm64_relocator::relocate_one_a64(
+                    INSTRUCT_PTR as usize,
+                    exe_mem.external_write_instruct(),
+                );
                 INSTRUCT_PTR = INSTRUCT_PTR.add(1);
             }
             Ok(())
@@ -138,7 +144,10 @@ extern "C" fn tracer(thread_id: i32) -> c_int {
         write_stream(("\nget pc: ".to_string() + &(INSTRUCT_PTR as usize).to_string()).as_bytes());
 
         while !is_arm64_branch(*INSTRUCT_PTR) {
-            arm64_relocator::relocate_one_a64(INSTRUCT_PTR as usize, exe_mem.external_write_instruct());
+            arm64_relocator::relocate_one_a64(
+                INSTRUCT_PTR as usize,
+                exe_mem.external_write_instruct(),
+            );
             INSTRUCT_PTR = INSTRUCT_PTR.add(1);
         }
 

@@ -93,7 +93,12 @@ struct UnrestrictedLinkerApi {
     /// __dl___loader_dlopen(filename, flags, caller_addr) -> handle
     dlopen: unsafe extern "C" fn(*const i8, i32, *const std::ffi::c_void) -> *mut std::ffi::c_void,
     /// __dl___loader_dlvsym(handle, symbol, version, caller_addr) -> addr
-    dlsym: unsafe extern "C" fn(*mut std::ffi::c_void, *const i8, *const i8, *const std::ffi::c_void) -> *mut std::ffi::c_void,
+    dlsym: unsafe extern "C" fn(
+        *mut std::ffi::c_void,
+        *const i8,
+        *const i8,
+        *const std::ffi::c_void,
+    ) -> *mut std::ffi::c_void,
     /// Trusted caller address (linker64 内部地址，dlopen_addr)
     trusted_caller: *const std::ffi::c_void,
     /// dl_mutex — __dl__ZL10g_dl_mutex
@@ -103,13 +108,15 @@ struct UnrestrictedLinkerApi {
     /// solist global variable (fallback) — __dl__ZL6solist
     solist: *mut *mut std::ffi::c_void,
     /// soinfo::get_realpath() — __dl__ZNK6soinfo12get_realpathEv
-    soinfo_get_path: Option<unsafe extern "C" fn(*mut std::ffi::c_void) -> *const std::os::raw::c_char>,
+    soinfo_get_path:
+        Option<unsafe extern "C" fn(*mut std::ffi::c_void) -> *const std::os::raw::c_char>,
 }
 
 unsafe impl Send for UnrestrictedLinkerApi {}
 unsafe impl Sync for UnrestrictedLinkerApi {}
 
-static UNRESTRICTED_LINKER_API: std::sync::OnceLock<Option<UnrestrictedLinkerApi>> = std::sync::OnceLock::new();
+static UNRESTRICTED_LINKER_API: std::sync::OnceLock<Option<UnrestrictedLinkerApi>> =
+    std::sync::OnceLock::new();
 
 /// Newtype wrapper for *mut c_void to implement Send+Sync
 pub(crate) struct SyncPtr(pub(crate) *mut std::ffi::c_void);
@@ -152,8 +159,12 @@ pub(crate) fn probe_libart_range() -> (u64, u64) {
         let end = parts.next().and_then(|s| u64::from_str_radix(s, 16).ok());
 
         if let (Some(s), Some(e)) = (start, end) {
-            if s < range_start { range_start = s; }
-            if e > range_end { range_end = e; }
+            if s < range_start {
+                range_start = s;
+            }
+            if e > range_end {
+                range_end = e;
+            }
         }
 
         if found_path.is_none() {
@@ -212,8 +223,12 @@ pub(crate) fn probe_module_range(module_name: &str) -> (u64, u64) {
         let end = parts.next().and_then(|s| u64::from_str_radix(s, 16).ok());
 
         if let (Some(s), Some(e)) = (start, end) {
-            if s < range_start { range_start = s; }
-            if e > range_end { range_end = e; }
+            if s < range_start {
+                range_start = s;
+            }
+            if e > range_end {
+                range_end = e;
+            }
         }
     }
 
@@ -253,7 +268,11 @@ fn find_module_base(module_name: &str) -> u64 {
             Some(a) => a,
             None => continue,
         };
-        if let Some(start) = addr_part.split('-').next().and_then(|s| u64::from_str_radix(s, 16).ok()) {
+        if let Some(start) = addr_part
+            .split('-')
+            .next()
+            .and_then(|s| u64::from_str_radix(s, 16).ok())
+        {
             return start;
         }
     }
@@ -307,22 +326,29 @@ fn enumerate_modules_from_maps() -> Vec<ModuleInfo> {
 
         // Find or insert
         if let Some(entry) = modules.iter_mut().find(|(p, _, _)| p == path) {
-            if start < entry.1 { entry.1 = start; }
-            if end > entry.2 { entry.2 = end; }
+            if start < entry.1 {
+                entry.1 = start;
+            }
+            if end > entry.2 {
+                entry.2 = end;
+            }
         } else {
             modules.push((path.to_string(), start, end));
         }
     }
 
-    modules.into_iter().map(|(path, base, end)| {
-        let name = path.rsplit('/').next().unwrap_or(&path).to_string();
-        ModuleInfo {
-            name,
-            base,
-            size: end - base,
-            path,
-        }
-    }).collect()
+    modules
+        .into_iter()
+        .map(|(path, base, end)| {
+            let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+            ModuleInfo {
+                name,
+                base,
+                size: end - base,
+                path,
+            }
+        })
+        .collect()
 }
 
 // ============================================================================
@@ -440,7 +466,8 @@ fn elf_find_symbols_in_data(
         if strtab_idx >= shnum {
             return;
         }
-        let strtab_shdr = &*(data.as_ptr().add(shdr_off + strtab_idx * shdr_size) as *const Elf64Shdr);
+        let strtab_shdr =
+            &*(data.as_ptr().add(shdr_off + strtab_idx * shdr_size) as *const Elf64Shdr);
         if strtab_shdr.sh_type != SHT_STRTAB {
             return;
         }
@@ -588,7 +615,8 @@ unsafe fn elf_find_symbols_in_memory(
     }
 
     output_message(&format!(
-        "[module] reading .symtab from memory: {} symbols", nsyms
+        "[module] reading .symtab from memory: {} symbols",
+        nsyms
     ));
 
     let mut remaining = wanted.len();
@@ -657,7 +685,9 @@ fn find_linker_info() -> (u64, String) {
             Some(p) if p.contains("linker64") => p.to_string(),
             _ => continue,
         };
-        let start = addr_part.split('-').next()
+        let start = addr_part
+            .split('-')
+            .next()
             .and_then(|s| u64::from_str_radix(s, 16).ok());
         if let Some(s) = start {
             return (s, path);
@@ -680,36 +710,46 @@ unsafe fn init_unrestricted_linker_api() -> Option<UnrestrictedLinkerApi> {
     }
 
     output_message(&format!(
-        "[linker api] linker64 base={:#x}, path={}", linker_base, linker_path
+        "[linker api] linker64 base={:#x}, path={}",
+        linker_base, linker_path
     ));
 
     // Batch lookup all needed symbols in one pass (Frida-style)
-    let symbols = elf_module_find_symbols(&linker_path, linker_base, &[
-        // dlopen/dlvsym (API 28+)
-        "__dl___loader_dlopen",
-        "__dl___loader_dlvsym",
-        // dlopen/dlvsym (API 26-27 fallback)
-        "__dl__Z8__dlopenPKciPKv",
-        "__dl__Z8__dlvsymPvPKcS1_PKv",
-        // Linker internals (Frida's gum_store_linker_symbol_if_needed)
-        "__dl__ZL10g_dl_mutex",
-        "__dl__ZL8gDlMutex",                    // < API 21
-        "__dl__Z15solist_get_headv",
-        "__dl__ZL6solist",
-        "__dl__ZNK6soinfo12get_realpathEv",
-        "__dl__ZNK6soinfo7get_pathEv",           // older fallback
-    ]);
+    let symbols = elf_module_find_symbols(
+        &linker_path,
+        linker_base,
+        &[
+            // dlopen/dlvsym (API 28+)
+            "__dl___loader_dlopen",
+            "__dl___loader_dlvsym",
+            // dlopen/dlvsym (API 26-27 fallback)
+            "__dl__Z8__dlopenPKciPKv",
+            "__dl__Z8__dlvsymPvPKcS1_PKv",
+            // Linker internals (Frida's gum_store_linker_symbol_if_needed)
+            "__dl__ZL10g_dl_mutex",
+            "__dl__ZL8gDlMutex", // < API 21
+            "__dl__Z15solist_get_headv",
+            "__dl__ZL6solist",
+            "__dl__ZNK6soinfo12get_realpathEv",
+            "__dl__ZNK6soinfo7get_pathEv", // older fallback
+        ],
+    );
 
-    output_message(&format!("[linker api] found {} symbols in one pass", symbols.len()));
+    output_message(&format!(
+        "[linker api] found {} symbols in one pass",
+        symbols.len()
+    ));
     for (name, addr) in &symbols {
         output_message(&format!("[linker api]   {}={:#x}", name, addr));
     }
 
     // Extract dlopen: prefer API 28+ name, fallback to API 26-27
-    let dlopen_addr = symbols.get("__dl___loader_dlopen")
+    let dlopen_addr = symbols
+        .get("__dl___loader_dlopen")
         .or_else(|| symbols.get("__dl__Z8__dlopenPKciPKv"))
         .copied();
-    let dlsym_addr = symbols.get("__dl___loader_dlvsym")
+    let dlsym_addr = symbols
+        .get("__dl___loader_dlvsym")
         .or_else(|| symbols.get("__dl__Z8__dlvsymPvPKcS1_PKv"))
         .copied();
 
@@ -736,7 +776,8 @@ unsafe fn init_unrestricted_linker_api() -> Option<UnrestrictedLinkerApi> {
     ));
 
     // Extract optional linker internals
-    let dl_mutex = symbols.get("__dl__ZL10g_dl_mutex")
+    let dl_mutex = symbols
+        .get("__dl__ZL10g_dl_mutex")
         .or_else(|| symbols.get("__dl__ZL8gDlMutex"))
         .map(|&addr| addr as *mut libc::pthread_mutex_t)
         .unwrap_or_else(|| {
@@ -744,18 +785,21 @@ unsafe fn init_unrestricted_linker_api() -> Option<UnrestrictedLinkerApi> {
             std::ptr::null_mut()
         });
 
-    let solist_get_head: Option<unsafe extern "C" fn() -> *mut std::ffi::c_void> =
-        symbols.get("__dl__Z15solist_get_headv")
-            .map(|&addr| std::mem::transmute(addr));
+    let solist_get_head: Option<unsafe extern "C" fn() -> *mut std::ffi::c_void> = symbols
+        .get("__dl__Z15solist_get_headv")
+        .map(|&addr| std::mem::transmute(addr));
 
-    let solist = symbols.get("__dl__ZL6solist")
+    let solist = symbols
+        .get("__dl__ZL6solist")
         .map(|&addr| addr as *mut *mut std::ffi::c_void)
         .unwrap_or(std::ptr::null_mut());
 
-    let soinfo_get_path: Option<unsafe extern "C" fn(*mut std::ffi::c_void) -> *const std::os::raw::c_char> =
-        symbols.get("__dl__ZNK6soinfo12get_realpathEv")
-            .or_else(|| symbols.get("__dl__ZNK6soinfo7get_pathEv"))
-            .map(|&addr| std::mem::transmute(addr));
+    let soinfo_get_path: Option<
+        unsafe extern "C" fn(*mut std::ffi::c_void) -> *const std::os::raw::c_char,
+    > = symbols
+        .get("__dl__ZNK6soinfo12get_realpathEv")
+        .or_else(|| symbols.get("__dl__ZNK6soinfo7get_pathEv"))
+        .map(|&addr| std::mem::transmute(addr));
     if soinfo_get_path.is_none() {
         output_message("[linker api] soinfo_get_path not found");
     }
@@ -777,54 +821,57 @@ unsafe fn init_unrestricted_linker_api() -> Option<UnrestrictedLinkerApi> {
 
 /// Get a dlopen handle to libart.so via unrestricted linker API (Frida-style).
 unsafe fn get_libart_handle() -> *mut std::ffi::c_void {
-    LIBART_HANDLE.get_or_init(|| {
-        let api = UNRESTRICTED_LINKER_API.get_or_init(|| init_unrestricted_linker_api());
-        if let Some(api) = api {
-            let &(libart_base, _) = LIBART_RANGE.get_or_init(probe_libart_range);
-            if libart_base == 0 {
-                output_message("[linker api] libart.so base not found in /proc/self/maps");
-                return SyncPtr(std::ptr::null_mut());
+    LIBART_HANDLE
+        .get_or_init(|| {
+            let api = UNRESTRICTED_LINKER_API.get_or_init(|| init_unrestricted_linker_api());
+            if let Some(api) = api {
+                let &(libart_base, _) = LIBART_RANGE.get_or_init(probe_libart_range);
+                if libart_base == 0 {
+                    output_message("[linker api] libart.so base not found in /proc/self/maps");
+                    return SyncPtr(std::ptr::null_mut());
+                }
+
+                let caller_addr = libart_base as *const std::ffi::c_void;
+
+                let paths_to_try: Vec<String> = {
+                    let mut paths = Vec::new();
+                    if let Some(Some(path)) = LIBART_PATH.get() {
+                        paths.push(path.clone());
+                    }
+                    paths.push("libart.so".to_string());
+                    paths
+                };
+
+                for path in &paths_to_try {
+                    let c_path = CString::new(path.as_str()).unwrap();
+                    let handle = (api.dlopen)(
+                        c_path.as_ptr() as *const i8,
+                        libc::RTLD_NOW | libc::RTLD_NOLOAD,
+                        caller_addr,
+                    );
+                    if !handle.is_null() {
+                        output_message(&format!(
+                            "[linker api] dlopen({}, NOLOAD, caller={:#x}) = {:?}",
+                            path, libart_base, handle
+                        ));
+                        return SyncPtr(handle);
+                    }
+
+                    let err = libc::dlerror();
+                    if !err.is_null() {
+                        let err_msg = std::ffi::CStr::from_ptr(err).to_string_lossy();
+                        output_message(&format!(
+                            "[linker api] dlopen({}, NOLOAD) failed: {}",
+                            path, err_msg
+                        ));
+                    }
+                }
+
+                output_message("[linker api] all dlopen attempts failed");
             }
-
-            let caller_addr = libart_base as *const std::ffi::c_void;
-
-            let paths_to_try: Vec<String> = {
-                let mut paths = Vec::new();
-                if let Some(Some(path)) = LIBART_PATH.get() {
-                    paths.push(path.clone());
-                }
-                paths.push("libart.so".to_string());
-                paths
-            };
-
-            for path in &paths_to_try {
-                let c_path = CString::new(path.as_str()).unwrap();
-                let handle = (api.dlopen)(
-                    c_path.as_ptr() as *const i8,
-                    libc::RTLD_NOW | libc::RTLD_NOLOAD,
-                    caller_addr,
-                );
-                if !handle.is_null() {
-                    output_message(&format!(
-                        "[linker api] dlopen({}, NOLOAD, caller={:#x}) = {:?}",
-                        path, libart_base, handle
-                    ));
-                    return SyncPtr(handle);
-                }
-
-                let err = libc::dlerror();
-                if !err.is_null() {
-                    let err_msg = std::ffi::CStr::from_ptr(err).to_string_lossy();
-                    output_message(&format!(
-                        "[linker api] dlopen({}, NOLOAD) failed: {}", path, err_msg
-                    ));
-                }
-            }
-
-            output_message("[linker api] all dlopen attempts failed");
-        }
-        SyncPtr(std::ptr::null_mut())
-    }).0
+            SyncPtr(std::ptr::null_mut())
+        })
+        .0
 }
 
 /// Get a dlopen handle to an arbitrary module via unrestricted linker API.
@@ -876,7 +923,12 @@ pub(crate) unsafe fn module_dlsym(module_name: &str, symbol: &str) -> *mut std::
     if let Some(api) = api {
         let handle = module_dlopen(module_name);
         if !handle.is_null() {
-            let addr = (api.dlsym)(handle, c_sym.as_ptr() as *const i8, std::ptr::null(), api.trusted_caller);
+            let addr = (api.dlsym)(
+                handle,
+                c_sym.as_ptr() as *const i8,
+                std::ptr::null(),
+                api.trusted_caller,
+            );
             if !addr.is_null() {
                 return addr;
             }
@@ -898,7 +950,12 @@ pub(crate) unsafe fn libart_dlsym(name: &str) -> *mut std::ffi::c_void {
     if let Some(api) = api {
         let handle = get_libart_handle();
         if !handle.is_null() {
-            let addr = (api.dlsym)(handle, c_sym.as_ptr() as *const i8, std::ptr::null(), api.trusted_caller);
+            let addr = (api.dlsym)(
+                handle,
+                c_sym.as_ptr() as *const i8,
+                std::ptr::null(),
+                api.trusted_caller,
+            );
             if !addr.is_null() {
                 return addr;
             }
@@ -996,7 +1053,9 @@ unsafe fn enumerate_soinfo() -> Vec<(u64, String)> {
         // Get path via soinfo::get_realpath()
         let path_ptr = soinfo_get_path(current);
         let path = if !path_ptr.is_null() {
-            std::ffi::CStr::from_ptr(path_ptr).to_string_lossy().to_string()
+            std::ffi::CStr::from_ptr(path_ptr)
+                .to_string_lossy()
+                .to_string()
         } else {
             String::new()
         };
@@ -1046,7 +1105,11 @@ fn find_module_base_for_path(path: &str) -> u64 {
             Some(a) => a,
             None => continue,
         };
-        if let Some(start) = addr_part.split('-').next().and_then(|s| u64::from_str_radix(s, 16).ok()) {
+        if let Some(start) = addr_part
+            .split('-')
+            .next()
+            .and_then(|s| u64::from_str_radix(s, 16).ok())
+        {
             return start;
         }
     }
@@ -1070,7 +1133,8 @@ unsafe extern "C" fn js_module_find_export(
     if argc < 2 {
         return ffi::JS_ThrowTypeError(
             ctx,
-            b"Module.findExportByName(moduleName, symbolName) requires 2 arguments\0".as_ptr() as *const _,
+            b"Module.findExportByName(moduleName, symbolName) requires 2 arguments\0".as_ptr()
+                as *const _,
         );
     }
 
@@ -1093,7 +1157,12 @@ unsafe extern "C" fn js_module_find_export(
         let c_sym = CString::new(symbol_name.as_str()).unwrap();
         let api = UNRESTRICTED_LINKER_API.get_or_init(|| init_unrestricted_linker_api());
         if let Some(api) = api {
-            (api.dlsym)(libc::RTLD_DEFAULT as _, c_sym.as_ptr() as *const i8, std::ptr::null(), api.trusted_caller)
+            (api.dlsym)(
+                libc::RTLD_DEFAULT as _,
+                c_sym.as_ptr() as *const i8,
+                std::ptr::null(),
+                api.trusted_caller,
+            )
         } else {
             std::ptr::null_mut()
         }
@@ -1189,9 +1258,27 @@ pub fn register_module_api(ctx: &JSContext) {
         let ctx_ptr = ctx.as_ptr();
         let module_obj = ffi::JS_NewObject(ctx_ptr);
 
-        add_cfunction_to_object(ctx_ptr, module_obj, "findExportByName", js_module_find_export, 2);
-        add_cfunction_to_object(ctx_ptr, module_obj, "findBaseAddress", js_module_find_base, 1);
-        add_cfunction_to_object(ctx_ptr, module_obj, "enumerateModules", js_module_enumerate, 0);
+        add_cfunction_to_object(
+            ctx_ptr,
+            module_obj,
+            "findExportByName",
+            js_module_find_export,
+            2,
+        );
+        add_cfunction_to_object(
+            ctx_ptr,
+            module_obj,
+            "findBaseAddress",
+            js_module_find_base,
+            1,
+        );
+        add_cfunction_to_object(
+            ctx_ptr,
+            module_obj,
+            "enumerateModules",
+            js_module_enumerate,
+            0,
+        );
 
         global.set_property(ctx.as_ptr(), "Module", JSValue(module_obj));
     }

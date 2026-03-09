@@ -11,12 +11,12 @@ use lazy_static::lazy_static;
 use prost::Message;
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::ffi::CString;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::ptr::null_mut;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
-use std::ffi::CString;
 
 // Android log priority levels
 const ANDROID_LOG_INFO: i32 = 4;
@@ -123,18 +123,15 @@ lazy_static! {
 /// 获取全局 Stalker
 #[inline]
 pub fn get_stalker() -> &'static mut Stalker {
-    let cell = GLOBAL_STALKER.get_or_init(|| {
-        StalkerCell(UnsafeCell::new(Stalker::new(&GUM)))
-    });
+    let cell = GLOBAL_STALKER.get_or_init(|| StalkerCell(UnsafeCell::new(Stalker::new(&GUM))));
     unsafe { &mut *cell.0.get() }
 }
 
 /// 获取全局 Interceptor
 #[inline]
 pub fn get_interceptor() -> &'static mut Interceptor {
-    let cell = GLOBAL_INTERCEPTOR.get_or_init(|| {
-        InterceptorCell(UnsafeCell::new(Interceptor::obtain(&GUM)))
-    });
+    let cell = GLOBAL_INTERCEPTOR
+        .get_or_init(|| InterceptorCell(UnsafeCell::new(Interceptor::obtain(&GUM))));
     unsafe { &mut *cell.0.get() }
 }
 
@@ -168,10 +165,18 @@ impl EventSink for SampleEventSink {
     fn query_mask(&mut self) -> EventMask {
         EventMask::None
     }
-    fn start(&mut self) { println!("start"); }
-    fn process(&mut self, _event: &Event) { println!("process"); }
-    fn flush(&mut self) { println!("flush"); }
-    fn stop(&mut self) { println!("stop"); }
+    fn start(&mut self) {
+        println!("start");
+    }
+    fn process(&mut self, _event: &Event) {
+        println!("process");
+    }
+    fn flush(&mut self) {
+        println!("flush");
+    }
+    fn stop(&mut self) {
+        println!("stop");
+    }
 }
 
 pub fn follow(tid: usize) {
@@ -187,14 +192,20 @@ pub fn follow(tid: usize) {
 
             if module_info.is_none() {
                 let (md_path, module_base, module_name) = match mdmap.find(addr) {
-                    Some(m) => (m.path().to_string(), m.range().base_address().0 as u64, m.name().to_string()),
+                    Some(m) => (
+                        m.path().to_string(),
+                        m.range().base_address().0 as u64,
+                        m.name().to_string(),
+                    ),
                     None => ("unknown".to_string(), 0u64, "unknown".to_string()),
                 };
 
-                should_trace = Some(!(md_path.contains("apex") ||
-                                     md_path.contains("system") ||
-                                     md_path.contains("unknown") ||
-                                     md_path.contains("memfd")));
+                should_trace = Some(
+                    !(md_path.contains("apex")
+                        || md_path.contains("system")
+                        || md_path.contains("unknown")
+                        || md_path.contains("memfd")),
+                );
 
                 module_info = Some((md_path, module_base, module_name));
             }
@@ -261,9 +272,7 @@ impl ProbeListener for Blistener {
 pub extern "C" fn replacecb(arg1: usize) -> usize {
     log_msg("start !".to_string());
     let original = *GLOBAL_ORIGINAL.get().unwrap();
-    let original_fn: extern "C" fn(usize) -> usize = unsafe {
-        std::mem::transmute(original)
-    };
+    let original_fn: extern "C" fn(usize) -> usize = unsafe { std::mem::transmute(original) };
     original_fn(arg1)
 }
 
@@ -281,11 +290,14 @@ pub fn hfollow(_lib: &str, addr: usize) {
     match interceptor.replace(
         NativePointer(target as *mut c_void),
         NativePointer(replacecb as *mut c_void),
-        NativePointer(null_mut())
+        NativePointer(null_mut()),
     ) {
         Ok(original) => {
             let _ = GLOBAL_ORIGINAL.set(original.0 as usize);
-            log_msg(format!("replace success, original trampoline: {:x}", original.0 as usize));
+            log_msg(format!(
+                "replace success, original trampoline: {:x}",
+                original.0 as usize
+            ));
         }
         Err(e) => {
             log_msg(format!("replace failed: {:?}", e));

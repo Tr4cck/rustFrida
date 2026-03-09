@@ -1,9 +1,9 @@
 //! Memory write operations
 
+use super::helpers::{get_addr_from_arg, write_with_perm};
 use crate::ffi;
 use crate::jsapi::util::is_addr_accessible;
 use crate::value::JSValue;
-use super::helpers::{get_addr_from_arg, write_with_perm};
 
 /// 生成标准 Memory.writeXXX(ptr, value) 函数。
 /// 使用 `($ctx, $argv) => expr` 语法传递 ctx 和 argv 到值提取表达式。
@@ -24,10 +24,18 @@ macro_rules! define_memory_write {
             }
             let addr = match get_addr_from_arg($ctx_id, JSValue(*$argv_id)) {
                 Some(a) => a,
-                None => return ffi::JS_ThrowTypeError($ctx_id, b"Invalid pointer\0".as_ptr() as *const _),
+                None => {
+                    return ffi::JS_ThrowTypeError(
+                        $ctx_id,
+                        b"Invalid pointer\0".as_ptr() as *const _,
+                    )
+                }
             };
             if !is_addr_accessible(addr, $size) {
-                return ffi::JS_ThrowRangeError($ctx_id, b"Invalid memory address\0".as_ptr() as *const _);
+                return ffi::JS_ThrowRangeError(
+                    $ctx_id,
+                    b"Invalid memory address\0".as_ptr() as *const _,
+                );
             }
             let val: $rust_type = $extract;
             if !write_with_perm(addr, $size, || {
@@ -35,7 +43,11 @@ macro_rules! define_memory_write {
             }) {
                 return ffi::JS_ThrowRangeError(
                     $ctx_id,
-                    concat!($js_name, "(): cannot make page writable (mprotect failed)\0").as_ptr() as *const _,
+                    concat!(
+                        $js_name,
+                        "(): cannot make page writable (mprotect failed)\0"
+                    )
+                    .as_ptr() as *const _,
                 );
             }
             JSValue::undefined().raw()

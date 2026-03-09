@@ -20,17 +20,29 @@ fn get_page_prot(addr: u64) -> Option<i32> {
         // Format: "start-end perms offset dev inode pathname"
         let b = line.as_bytes();
         if let Some(dash) = b.iter().position(|&x| x == b'-') {
-            let Ok(start) = u64::from_str_radix(&line[..dash], 16) else { continue };
+            let Ok(start) = u64::from_str_radix(&line[..dash], 16) else {
+                continue;
+            };
             let rest = &line[dash + 1..];
             if let Some(sp) = rest.bytes().position(|x| x == b' ') {
-                let Ok(end) = u64::from_str_radix(&rest[..sp], 16) else { continue };
+                let Ok(end) = u64::from_str_radix(&rest[..sp], 16) else {
+                    continue;
+                };
                 if addr >= start && addr < end {
                     let perms = rest[sp + 1..].as_bytes();
-                    if perms.len() < 3 { return None; }
+                    if perms.len() < 3 {
+                        return None;
+                    }
                     let mut prot = 0i32;
-                    if perms[0] == b'r' { prot |= libc::PROT_READ; }
-                    if perms[1] == b'w' { prot |= libc::PROT_WRITE; }
-                    if perms[2] == b'x' { prot |= libc::PROT_EXEC; }
+                    if perms[0] == b'r' {
+                        prot |= libc::PROT_READ;
+                    }
+                    if perms[1] == b'w' {
+                        prot |= libc::PROT_WRITE;
+                    }
+                    if perms[2] == b'x' {
+                        prot |= libc::PROT_EXEC;
+                    }
                     return Some(prot);
                 }
             }
@@ -61,7 +73,7 @@ pub(super) unsafe fn write_with_perm(addr: u64, size: usize, write_fn: impl FnOn
         return true;
     }
     let orig_prot = orig_prot.unwrap(); // safe: we checked Some above
-    // Page is not writable. Temporarily add PROT_WRITE.
+                                        // Page is not writable. Temporarily add PROT_WRITE.
     const PAGE_SIZE: usize = 0x1000;
     let start_page = (addr as usize) & !(PAGE_SIZE - 1);
     // 计算写入是否跨页，只对需要的页进行 mprotect
@@ -81,15 +93,11 @@ pub(super) unsafe fn write_with_perm(addr: u64, size: usize, write_fn: impl FnOn
     }
     write_fn();
     // 恢复原始权限，检查返回值
-    if libc::mprotect(
-        start_page as *mut libc::c_void,
-        mprotect_len,
-        orig_prot,
-    ) != 0
-    {
-        crate::jsapi::console::output_message(
-            &format!("[warn] mprotect 恢复权限失败: addr=0x{:x}, len=0x{:x}", start_page, mprotect_len),
-        );
+    if libc::mprotect(start_page as *mut libc::c_void, mprotect_len, orig_prot) != 0 {
+        crate::jsapi::console::output_message(&format!(
+            "[warn] mprotect 恢复权限失败: addr=0x{:x}, len=0x{:x}",
+            start_page, mprotect_len
+        ));
     }
     true
 }

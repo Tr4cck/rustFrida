@@ -11,9 +11,153 @@
     delete Java._methods;
     delete Java._getFieldAuto;
 
-    // Wrap a raw Java object pointer as a Proxy for field access via dot notation.
-    // e.g. ctx.thisObj.mTitle reads the mTitle field via JNI reflection.
-    // Primitive fields → JS primitives; Object fields → recursively wrapped Proxy.
+    function _argsFrom(argsLike, start) {
+        var args = [];
+        for (var i = start || 0; i < argsLike.length; i++) {
+            args.push(argsLike[i]);
+        }
+        return args;
+    }
+
+    function _isWrappedJavaObject(value) {
+        return value !== null && typeof value === "object"
+            && value.__jptr !== undefined;
+    }
+
+    function _wrapJavaReturn(value) {
+        if (_isWrappedJavaObject(value)) {
+            return _wrapJavaObj(value.__jptr, value.__jclass);
+        }
+        return value;
+    }
+
+    function _invokeJavaMethod(jptr, jcls, name, sig, args) {
+        return _wrapJavaReturn(
+            Java._invokeMethod.apply(Java, [jptr, jcls, name, sig].concat(args))
+        );
+    }
+
+    // 简单的 JNI 签名解析，将 "(IILjava/lang/String;)V" → ["I","I","Ljava/lang/String;"]
+    function _parseJniParams(jniSig) {
+        var res = [];
+        var start = jniSig.indexOf('(') + 1;
+        var i = start;
+        while (i < jniSig.length && jniSig[i] !== ')') {
+            var end = i + 1;
+            if (jniSig[i] === 'L') {
+                while (end < jniSig.length && jniSig[end] !== ';') end++;
+                end++;
+            } else if (jniSig[i] === '[') {
+                while (end < jniSig.length && jniSig[end] === '[') end++;
+                if (end < jniSig.length && jniSig[end] === 'L') {
+                    end++;
+                    while (end < jniSig.length && jniSig[end] !== ';') end++;
+                    end++;
+                } else {
+                    end++;
+                }
+            }
+            res.push(jniSig.slice(i, end));
+            i = end;
+        }
+        return res;
+    }
+
+    function _isJsValueCompatible(jsVal, jniType) {
+        var t0 = jniType.charAt(0);
+        if (jsVal === null || jsVal === undefined) {
+            return t0 === 'L' || t0 === '[';
+        }
+        var jsType = typeof jsVal;
+        if (t0 === 'Z') {
+            return jsType === "boolean" || jsType === "number";
+        }
+        if (t0 === 'B' || t0 === 'S' || t0 === 'I'
+            || t0 === 'F' || t0 === 'D') {
+            return jsType === "number";
+        }
+        if (t0 === 'J') {
+            return jsType === "bigint" || jsType === "number";
+        }
+        if (t0 === 'L') {
+            if (jsType === "string") {
+                return jniType === "Ljava/lang/String;";
+            }
+            return jsType === "object";
+        }
+        if (t0 === '[') {
+            return Array.isArray(jsVal) || jsType === "object";
+        }
+        return false;
+    }
+
+    function _scoreOverload(methodInfo, jsArgs) {
+        var paramTypes = _parseJniParams(methodInfo.sig);
+        if (paramTypes.length !== jsArgs.length) {
+            return -1;
+        }
+
+        var score = 0;
+        for (var i = 0; i < paramTypes.length; i++) {
+            if (!_isJsValueCompatible(jsArgs[i], paramTypes[i])) {
+                return -1;
+            }
+            score += /^[L[]/.test(paramTypes[i]) ? 1 : 2;
+        }
+        return score;
+    }
+
+    function _resolveInstanceMethodSig(jcls, name, jsArgs) {
+        var methods = _methods(jcls);
+        var best = null;
+        var bestScore = -1;
+
+        for (var i = 0; i < methods.length; i++) {
+            var methodInfo = methods[i];
+            if (methodInfo.name !== name || methodInfo.static) {
+                continue;
+            }
+            var score = _scoreOverload(methodInfo, jsArgs);
+            if (score > bestScore) {
+                best = methodInfo;
+                bestScore = score;
+            }
+        }
+
+        if (!best) {
+            throw new Error("No instance method found: " + jcls + "." + name);
+        }
+        if (bestScore < 0) {
+            throw new Error("No matching overload for " + jcls + "." + name
+                + " with " + jsArgs.length + " argument(s)");
+        }
+        return best.sig;
+    }
+
+    function _makeInstanceMethodInvoker(target, name) {
+        return function() {
+            var args = _argsFrom(arguments);
+            var sig = typeof args[0] === "string" && args[0].charAt(0) === '('
+                ? args.shift()
+                : _resolveInstanceMethodSig(target.__jclass, name, args);
+
+            return _invokeJavaMethod(
+                target.__jptr,
+                target.__jclass,
+                name,
+                sig,
+                args
+            );
+        };
+    }
+
+    // Wrap a raw Java object pointer as a Proxy for field access via dot notation,
+    // and direct instance method invocation via obj.method(...)
+    // - 字段访问:   obj.fieldName
+    // - 方法调用:
+    //     1) 显式签名: obj.method("(Ljava/lang/String;)V", "arg")
+    //     2) Frida 风格自动匹配: obj.method("arg") （根据实参类型选择 overload）
+    // - 快捷调用:   obj.$call("methodName", "(sig)", ...args)
     function _wrapJavaObj(ptr, cls) {
         var target = {__jptr: ptr, __jclass: cls};
         var handler = {
@@ -28,22 +172,43 @@
                     return "[JavaObject:" + target.__jclass + "]";
                 };
                 if (prop === "$className") return target.__jclass;
+                if (prop === "$call") {
+                    // Instance method invocation:
+                    //   obj.$call("methodName", "(I)V", arg1, arg2, ...)
+                    return function(name, sig) {
+                        if (typeof name !== "string" || typeof sig !== "string") {
+                            throw new Error("obj.$call(name, sig, ...args) requires (string, string, ...)");
+                        }
+                        return _invokeJavaMethod(
+                            target.__jptr,
+                            target.__jclass,
+                            name,
+                            sig,
+                            _argsFrom(arguments, 2)
+                        );
+                    };
+                }
                 var jptr = target.__jptr;
                 var jcls = target.__jclass;
+                var result;
                 try {
-                    var result = _getFieldAuto(jptr, jcls, prop);
+                    result = _getFieldAuto(jptr, jcls, prop);
                 } catch(e) {
                     console.log("[_wrapJavaObj] _getFieldAuto ERROR: " + e
                         + " ptr=" + jptr + " cls=" + jcls
                         + " prop=" + prop);
                     return undefined;
                 }
-                // Object fields come back as {__jptr, __jclass} — wrap recursively
-                if (result !== null && typeof result === "object"
-                    && result.__jptr !== undefined) {
-                    return _wrapJavaObj(result.__jptr, result.__jclass);
+                // 如果字段存在（包括 null），按字段语义处理
+                if (result !== undefined) {
+                    return _wrapJavaReturn(result);
                 }
-                return result;
+
+                // 没有同名字段：按方法处理，返回一个调用该方法的函数。
+                // 用法示例:
+                //   显式签名: obj.method("(I)V", 123)
+                //   自动匹配: obj.method("abc", 123)
+                return _makeInstanceMethodInvoker(target, prop);
             }
         };
         return new Proxy(target, handler);

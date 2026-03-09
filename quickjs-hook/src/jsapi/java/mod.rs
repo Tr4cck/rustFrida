@@ -232,6 +232,8 @@ pub fn register_java_api(ctx: &JSContext) {
         add_cfunction_to_object(ctx_ptr, java_obj, "getStealth", js_java_get_stealth, 0);
         add_cfunction_to_object(ctx_ptr, java_obj, "_artRouterDebug", js_art_router_debug, 0);
         add_cfunction_to_object(ctx_ptr, java_obj, "_methods", js_java_methods, 1);
+        // Instance method invocation helper used by Java object proxies
+        add_cfunction_to_object(ctx_ptr, java_obj, "_invokeMethod", js_java_invoke_method, 4);
         add_cfunction_to_object(
             ctx_ptr,
             java_obj,
