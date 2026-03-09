@@ -101,6 +101,8 @@ pub(super) type NewGlobalRefFn =
 pub(super) type DeleteGlobalRefFn = unsafe extern "C" fn(JniEnv, *mut std::ffi::c_void);
 pub(super) type GetObjectClassFn =
     unsafe extern "C" fn(JniEnv, *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+pub(super) type IsInstanceOfFn =
+    unsafe extern "C" fn(JniEnv, *mut std::ffi::c_void, *mut std::ffi::c_void) -> u8;
 pub(super) type GetFieldIdFn = unsafe extern "C" fn(
     JniEnv,
     *mut std::ffi::c_void,
@@ -125,18 +127,66 @@ pub(super) type CallObjectMethodAFn = unsafe extern "C" fn(
     *mut std::ffi::c_void,
     *const std::ffi::c_void,
 ) -> *mut std::ffi::c_void;
+pub(super) type CallBooleanMethodAFn = unsafe extern "C" fn(
+    JniEnv,
+    *mut std::ffi::c_void,
+    *mut std::ffi::c_void,
+    *const std::ffi::c_void,
+) -> u8;
+pub(super) type CallByteMethodAFn = unsafe extern "C" fn(
+    JniEnv,
+    *mut std::ffi::c_void,
+    *mut std::ffi::c_void,
+    *const std::ffi::c_void,
+) -> i8;
+pub(super) type CallCharMethodAFn = unsafe extern "C" fn(
+    JniEnv,
+    *mut std::ffi::c_void,
+    *mut std::ffi::c_void,
+    *const std::ffi::c_void,
+) -> u16;
+pub(super) type CallShortMethodAFn = unsafe extern "C" fn(
+    JniEnv,
+    *mut std::ffi::c_void,
+    *mut std::ffi::c_void,
+    *const std::ffi::c_void,
+) -> i16;
 pub(super) type CallStaticObjectMethodAFn = unsafe extern "C" fn(
     JniEnv,
     *mut std::ffi::c_void,
     *mut std::ffi::c_void,
     *const std::ffi::c_void,
 ) -> *mut std::ffi::c_void;
+pub(super) type CallStaticIntMethodAFn = unsafe extern "C" fn(
+    JniEnv,
+    *mut std::ffi::c_void,
+    *mut std::ffi::c_void,
+    *const std::ffi::c_void,
+) -> i32;
 pub(super) type CallIntMethodAFn = unsafe extern "C" fn(
     JniEnv,
     *mut std::ffi::c_void,
     *mut std::ffi::c_void,
     *const std::ffi::c_void,
 ) -> i32;
+pub(super) type CallLongMethodAFn = unsafe extern "C" fn(
+    JniEnv,
+    *mut std::ffi::c_void,
+    *mut std::ffi::c_void,
+    *const std::ffi::c_void,
+) -> i64;
+pub(super) type CallFloatMethodAFn = unsafe extern "C" fn(
+    JniEnv,
+    *mut std::ffi::c_void,
+    *mut std::ffi::c_void,
+    *const std::ffi::c_void,
+) -> f32;
+pub(super) type CallDoubleMethodAFn = unsafe extern "C" fn(
+    JniEnv,
+    *mut std::ffi::c_void,
+    *mut std::ffi::c_void,
+    *const std::ffi::c_void,
+) -> f64;
 pub(super) type ToReflectedMethodFn = unsafe extern "C" fn(
     JniEnv,
     *mut std::ffi::c_void,
@@ -584,7 +634,14 @@ pub(super) const JNI_POP_LOCAL_FRAME: usize = 20;
 pub(super) const JNI_DELETE_LOCAL_REF: usize = 23;
 pub(super) const JNI_GET_METHOD_ID: usize = 33;
 pub(super) const JNI_CALL_OBJECT_METHOD_A: usize = 36;
+pub(super) const JNI_CALL_BOOLEAN_METHOD_A: usize = 39;
+pub(super) const JNI_CALL_BYTE_METHOD_A: usize = 42;
+pub(super) const JNI_CALL_CHAR_METHOD_A: usize = 45;
+pub(super) const JNI_CALL_SHORT_METHOD_A: usize = 48;
 pub(super) const JNI_CALL_INT_METHOD_A: usize = 51;
+pub(super) const JNI_CALL_LONG_METHOD_A: usize = 54;
+pub(super) const JNI_CALL_FLOAT_METHOD_A: usize = 57;
+pub(super) const JNI_CALL_DOUBLE_METHOD_A: usize = 60;
 pub(super) const JNI_GET_STATIC_METHOD_ID: usize = 113;
 pub(super) const JNI_GET_STRING_UTF_CHARS: usize = 169;
 pub(super) const JNI_RELEASE_STRING_UTF_CHARS: usize = 170;

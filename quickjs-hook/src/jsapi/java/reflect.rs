@@ -5,7 +5,6 @@
 
 use crate::jsapi::console::output_message;
 use std::ffi::CString;
-use std::os::raw::c_char;
 
 use super::jni_core::*;
 
@@ -173,6 +172,34 @@ pub(super) struct ReflectIds {
     pub(super) class_get_name_mid: *mut std::ffi::c_void,
     /// Global ref to java.lang.String class (for IsInstanceOf checks in callbacks)
     pub(super) string_class: *mut std::ffi::c_void,
+    /// Global ref to java.util.List for automatic List/ArrayList marshaling
+    pub(super) list_class: *mut std::ffi::c_void,
+    /// java.util.List.size() -> int
+    pub(super) list_size_mid: *mut std::ffi::c_void,
+    /// java.util.List.get(int) -> Object
+    pub(super) list_get_mid: *mut std::ffi::c_void,
+    /// Global ref to java.lang.reflect.Array for automatic Java array marshaling
+    pub(super) array_class: *mut std::ffi::c_void,
+    /// Array.getLength(Object) -> int
+    pub(super) array_get_length_mid: *mut std::ffi::c_void,
+    /// Array.get(Object, int) -> Object
+    pub(super) array_get_mid: *mut std::ffi::c_void,
+    /// java.lang.Boolean.booleanValue() -> boolean
+    pub(super) boolean_value_mid: *mut std::ffi::c_void,
+    /// java.lang.Byte.byteValue() -> byte
+    pub(super) byte_value_mid: *mut std::ffi::c_void,
+    /// java.lang.Character.charValue() -> char
+    pub(super) char_value_mid: *mut std::ffi::c_void,
+    /// java.lang.Short.shortValue() -> short
+    pub(super) short_value_mid: *mut std::ffi::c_void,
+    /// java.lang.Integer.intValue() -> int
+    pub(super) int_value_mid: *mut std::ffi::c_void,
+    /// java.lang.Long.longValue() -> long
+    pub(super) long_value_mid: *mut std::ffi::c_void,
+    /// java.lang.Float.floatValue() -> float
+    pub(super) float_value_mid: *mut std::ffi::c_void,
+    /// java.lang.Double.doubleValue() -> double
+    pub(super) double_value_mid: *mut std::ffi::c_void,
     /// Global ref to the app's ClassLoader (for loading app classes from native threads)
     pub(super) app_classloader: *mut std::ffi::c_void,
     /// ClassLoader.loadClass(String) method ID
@@ -321,16 +348,50 @@ pub(super) unsafe fn cache_reflect_ids(env: JniEnv) {
         let c_class_cls = CString::new("java/lang/Class").unwrap();
         let c_field_cls = CString::new("java/lang/reflect/Field").unwrap();
         let c_string_cls = CString::new("java/lang/String").unwrap();
+        let c_list_cls = CString::new("java/util/List").unwrap();
+        let c_array_cls = CString::new("java/lang/reflect/Array").unwrap();
+        let c_boolean_cls = CString::new("java/lang/Boolean").unwrap();
+        let c_byte_cls = CString::new("java/lang/Byte").unwrap();
+        let c_character_cls = CString::new("java/lang/Character").unwrap();
+        let c_short_cls = CString::new("java/lang/Short").unwrap();
+        let c_integer_cls = CString::new("java/lang/Integer").unwrap();
+        let c_long_cls = CString::new("java/lang/Long").unwrap();
+        let c_float_cls = CString::new("java/lang/Float").unwrap();
+        let c_double_cls = CString::new("java/lang/Double").unwrap();
 
         let class_cls = find_class(env, c_class_cls.as_ptr());
         let field_cls = find_class(env, c_field_cls.as_ptr());
         let string_cls_local = find_class(env, c_string_cls.as_ptr());
+        let list_cls_local = find_class(env, c_list_cls.as_ptr());
+        let array_cls_local = find_class(env, c_array_cls.as_ptr());
+        let boolean_cls = find_class(env, c_boolean_cls.as_ptr());
+        let byte_cls = find_class(env, c_byte_cls.as_ptr());
+        let character_cls = find_class(env, c_character_cls.as_ptr());
+        let short_cls = find_class(env, c_short_cls.as_ptr());
+        let integer_cls = find_class(env, c_integer_cls.as_ptr());
+        let long_cls = find_class(env, c_long_cls.as_ptr());
+        let float_cls = find_class(env, c_float_cls.as_ptr());
+        let double_cls = find_class(env, c_double_cls.as_ptr());
         jni_check_exc(env);
 
         // Create a global ref for String class so it's usable from hook callbacks
         let string_class = if !string_cls_local.is_null() {
             let g = new_global_ref(env, string_cls_local);
             delete_local_ref(env, string_cls_local);
+            g
+        } else {
+            std::ptr::null_mut()
+        };
+        let list_class = if !list_cls_local.is_null() {
+            let g = new_global_ref(env, list_cls_local);
+            delete_local_ref(env, list_cls_local);
+            g
+        } else {
+            std::ptr::null_mut()
+        };
+        let array_class = if !array_cls_local.is_null() {
+            let g = new_global_ref(env, array_cls_local);
+            delete_local_ref(env, array_cls_local);
             g
         } else {
             std::ptr::null_mut()
@@ -343,6 +404,31 @@ pub(super) unsafe fn cache_reflect_ids(env: JniEnv) {
         let c_get_type_sig = CString::new("()Ljava/lang/Class;").unwrap();
         let c_get_name = CString::new("getName").unwrap();
         let c_get_name_sig = CString::new("()Ljava/lang/String;").unwrap();
+        let c_size = CString::new("size").unwrap();
+        let c_size_sig = CString::new("()I").unwrap();
+        let c_get = CString::new("get").unwrap();
+        let c_list_get_sig = CString::new("(I)Ljava/lang/Object;").unwrap();
+        let c_array_get_length = CString::new("getLength").unwrap();
+        let c_array_get_length_sig = CString::new("(Ljava/lang/Object;)I").unwrap();
+        let c_array_get = CString::new("get").unwrap();
+        let c_array_get_sig =
+            CString::new("(Ljava/lang/Object;I)Ljava/lang/Object;").unwrap();
+        let c_boolean_value = CString::new("booleanValue").unwrap();
+        let c_boolean_value_sig = CString::new("()Z").unwrap();
+        let c_byte_value = CString::new("byteValue").unwrap();
+        let c_byte_value_sig = CString::new("()B").unwrap();
+        let c_char_value = CString::new("charValue").unwrap();
+        let c_char_value_sig = CString::new("()C").unwrap();
+        let c_short_value = CString::new("shortValue").unwrap();
+        let c_short_value_sig = CString::new("()S").unwrap();
+        let c_int_value = CString::new("intValue").unwrap();
+        let c_int_value_sig = CString::new("()I").unwrap();
+        let c_long_value = CString::new("longValue").unwrap();
+        let c_long_value_sig = CString::new("()J").unwrap();
+        let c_float_value = CString::new("floatValue").unwrap();
+        let c_float_value_sig = CString::new("()F").unwrap();
+        let c_double_value = CString::new("doubleValue").unwrap();
+        let c_double_value_sig = CString::new("()D").unwrap();
 
         let get_field_mid = get_mid(env, class_cls, c_get_field.as_ptr(), c_field_sig.as_ptr());
         let get_declared_field_mid = get_mid(
@@ -355,6 +441,36 @@ pub(super) unsafe fn cache_reflect_ids(env: JniEnv) {
             get_mid(env, field_cls, c_get_type.as_ptr(), c_get_type_sig.as_ptr());
         let class_get_name_mid =
             get_mid(env, class_cls, c_get_name.as_ptr(), c_get_name_sig.as_ptr());
+        let get_static_mid: GetStaticMethodIdFn =
+            jni_fn!(env, GetStaticMethodIdFn, JNI_GET_STATIC_METHOD_ID);
+        let get_mid_if = |cls: *mut std::ffi::c_void, name: &CString, sig: &CString| {
+            if cls.is_null() {
+                std::ptr::null_mut()
+            } else {
+                get_mid(env, cls, name.as_ptr(), sig.as_ptr())
+            }
+        };
+        let get_static_mid_if = |cls: *mut std::ffi::c_void, name: &CString, sig: &CString| {
+            if cls.is_null() {
+                std::ptr::null_mut()
+            } else {
+                get_static_mid(env, cls, name.as_ptr(), sig.as_ptr())
+            }
+        };
+
+        let list_size_mid = get_mid_if(list_class, &c_size, &c_size_sig);
+        let list_get_mid = get_mid_if(list_class, &c_get, &c_list_get_sig);
+        let array_get_length_mid =
+            get_static_mid_if(array_class, &c_array_get_length, &c_array_get_length_sig);
+        let array_get_mid = get_static_mid_if(array_class, &c_array_get, &c_array_get_sig);
+        let boolean_value_mid = get_mid_if(boolean_cls, &c_boolean_value, &c_boolean_value_sig);
+        let byte_value_mid = get_mid_if(byte_cls, &c_byte_value, &c_byte_value_sig);
+        let char_value_mid = get_mid_if(character_cls, &c_char_value, &c_char_value_sig);
+        let short_value_mid = get_mid_if(short_cls, &c_short_value, &c_short_value_sig);
+        let int_value_mid = get_mid_if(integer_cls, &c_int_value, &c_int_value_sig);
+        let long_value_mid = get_mid_if(long_cls, &c_long_value, &c_long_value_sig);
+        let float_value_mid = get_mid_if(float_cls, &c_float_value, &c_float_value_sig);
+        let double_value_mid = get_mid_if(double_cls, &c_double_value, &c_double_value_sig);
         jni_check_exc(env);
 
         // Clean up local refs for the Class objects (method IDs are global)
@@ -363,6 +479,20 @@ pub(super) unsafe fn cache_reflect_ids(env: JniEnv) {
         }
         if !field_cls.is_null() {
             delete_local_ref(env, field_cls);
+        }
+        for cls in [
+            boolean_cls,
+            byte_cls,
+            character_cls,
+            short_cls,
+            integer_cls,
+            long_cls,
+            float_cls,
+            double_cls,
+        ] {
+            if !cls.is_null() {
+                delete_local_ref(env, cls);
+            }
         }
 
         // --- Capture app ClassLoader for loading app classes from native threads ---
@@ -500,6 +630,20 @@ pub(super) unsafe fn cache_reflect_ids(env: JniEnv) {
             field_get_type_mid,
             class_get_name_mid,
             string_class,
+            list_class,
+            list_size_mid,
+            list_get_mid,
+            array_class,
+            array_get_length_mid,
+            array_get_mid,
+            boolean_value_mid,
+            byte_value_mid,
+            char_value_mid,
+            short_value_mid,
+            int_value_mid,
+            long_value_mid,
+            float_value_mid,
+            double_value_mid,
             app_classloader,
             load_class_mid,
             art_method_field_id,

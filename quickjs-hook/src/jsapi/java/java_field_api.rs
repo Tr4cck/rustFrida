@@ -160,24 +160,7 @@ unsafe fn read_field_value(
                     ffi::JS_NewBigUint64(ctx, ptr_val)
                 }
                 ObjectFieldMode::WrappedProxy { ref type_name } => {
-                    // Convert local ref to global ref so it survives beyond this native frame.
-                    // Local refs are only valid within the current JNI call; storing a local ref
-                    // in a JS object for later use would result in a dangling reference.
-                    let new_global_ref: NewGlobalRefFn =
-                        jni_fn!(env, NewGlobalRefFn, JNI_NEW_GLOBAL_REF);
-                    let global_ref = new_global_ref(env, obj_val);
-                    delete_local_ref(env, obj_val);
-
-                    let wrapper = ffi::JS_NewObject(ctx);
-                    let wrapper_val = JSValue(wrapper);
-
-                    let ptr_val = ffi::JS_NewBigUint64(ctx, global_ref as u64);
-                    wrapper_val.set_property(ctx, "__jptr", JSValue(ptr_val));
-
-                    let cls_val = JSValue::string(ctx, type_name);
-                    wrapper_val.set_property(ctx, "__jclass", cls_val);
-
-                    wrapper
+                    marshal_local_java_object_to_js(ctx, env, obj_val, Some(type_name))
                 }
             }
         }
@@ -385,6 +368,7 @@ unsafe fn lookup_field_in_cache(
             let inner = &info.jni_sig[1..info.jni_sig.len() - 1];
             inner.replace('/', ".")
         }
+        Some(b'[') => info.jni_sig.clone(),
         _ => String::new(),
     };
     Some((info.jni_sig.clone(), info.field_id, info.is_static, tn))
