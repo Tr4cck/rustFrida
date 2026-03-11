@@ -5,6 +5,7 @@
 
 use crate::jsapi::console::output_message;
 use std::ffi::CString;
+use std::sync::Mutex;
 
 use super::jni_core::*;
 
@@ -228,6 +229,472 @@ use std::sync::atomic::AtomicU64;
 pub(super) static CL_OVERRIDE: AtomicU64 = AtomicU64::new(0);
 /// ClassLoader.loadClass method ID（随 CL_OVERRIDE 一起设置）
 pub(super) static LC_MID_OVERRIDE: AtomicU64 = AtomicU64::new(0);
+/// JS 枚举接口临时持有的 ClassLoader global refs，供 cleanup 时统一释放。
+static ENUMERATED_CLASSLOADER_REFS: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+
+pub(super) struct ClassLoaderInfo {
+    pub(super) ptr: u64,
+    pub(super) source: String,
+    pub(super) loader_class_name: String,
+    pub(super) description: String,
+}
+
+unsafe fn read_java_string(
+    env: JniEnv,
+    jstr: *mut std::ffi::c_void,
+) -> Option<String> {
+    if jstr.is_null() {
+        return None;
+    }
+
+    let get_str: GetStringUtfCharsFn = jni_fn!(env, GetStringUtfCharsFn, JNI_GET_STRING_UTF_CHARS);
+    let rel_str: ReleaseStringUtfCharsFn =
+        jni_fn!(env, ReleaseStringUtfCharsFn, JNI_RELEASE_STRING_UTF_CHARS);
+    let delete_local_ref: DeleteLocalRefFn = jni_fn!(env, DeleteLocalRefFn, JNI_DELETE_LOCAL_REF);
+
+    let chars = get_str(env, jstr, std::ptr::null_mut());
+    if chars.is_null() {
+        delete_local_ref(env, jstr);
+        jni_check_exc(env);
+        return None;
+    }
+
+    let value = std::ffi::CStr::from_ptr(chars)
+        .to_string_lossy()
+        .to_string();
+    rel_str(env, jstr, chars);
+    delete_local_ref(env, jstr);
+    Some(value)
+}
+
+unsafe fn describe_classloader(
+    env: JniEnv,
+    loader: *mut std::ffi::c_void,
+) -> (String, String) {
+    if loader.is_null() {
+        return ("<null>".to_string(), "<null>".to_string());
+    }
+
+    let find_class: FindClassFn = jni_fn!(env, FindClassFn, JNI_FIND_CLASS);
+    let get_mid: GetMethodIdFn = jni_fn!(env, GetMethodIdFn, JNI_GET_METHOD_ID);
+    let get_object_class: GetObjectClassFn = jni_fn!(env, GetObjectClassFn, JNI_GET_OBJECT_CLASS);
+    let call_obj: CallObjectMethodAFn = jni_fn!(env, CallObjectMethodAFn, JNI_CALL_OBJECT_METHOD_A);
+    let delete_local_ref: DeleteLocalRefFn = jni_fn!(env, DeleteLocalRefFn, JNI_DELETE_LOCAL_REF);
+
+    let loader_cls = get_object_class(env, loader);
+    let loader_class_name = if loader_cls.is_null() || jni_check_exc(env) {
+        "<unknown>".to_string()
+    } else {
+        let name = get_class_name_unchecked(env as u64, loader_cls as u64)
+            .unwrap_or_else(|| "<unknown>".to_string());
+        delete_local_ref(env, loader_cls);
+        name
+    };
+
+    let object_cls_name = CString::new("java/lang/Object").unwrap();
+    let object_cls = find_class(env, object_cls_name.as_ptr());
+    if object_cls.is_null() || jni_check_exc(env) {
+        return (loader_class_name.clone(), loader_class_name);
+    }
+
+    let to_string_name = CString::new("toString").unwrap();
+    let to_string_sig = CString::new("()Ljava/lang/String;").unwrap();
+    let to_string_mid = get_mid(env, object_cls, to_string_name.as_ptr(), to_string_sig.as_ptr());
+    delete_local_ref(env, object_cls);
+    if to_string_mid.is_null() || jni_check_exc(env) {
+        return (loader_class_name.clone(), loader_class_name);
+    }
+
+    let desc = call_obj(env, loader, to_string_mid, std::ptr::null());
+    if desc.is_null() || jni_check_exc(env) {
+        return (loader_class_name.clone(), loader_class_name);
+    }
+
+    let description = read_java_string(env, desc).unwrap_or_else(|| loader_class_name.clone());
+    (loader_class_name, description)
+}
+
+unsafe fn remember_enumerated_classloader_ref(ptr: u64) {
+    if ptr == 0 {
+        return;
+    }
+    let mut refs = ENUMERATED_CLASSLOADER_REFS.lock().unwrap_or_else(|e| e.into_inner());
+    refs.push(ptr);
+}
+
+pub(super) unsafe fn cleanup_enumerated_classloader_refs(env: JniEnv) {
+    let delete_global_ref: DeleteGlobalRefFn = jni_fn!(env, DeleteGlobalRefFn, JNI_DELETE_GLOBAL_REF);
+    let mut refs = ENUMERATED_CLASSLOADER_REFS.lock().unwrap_or_else(|e| e.into_inner());
+    for ptr in refs.drain(..) {
+        if ptr != 0 {
+            delete_global_ref(env, ptr as *mut std::ffi::c_void);
+        }
+    }
+}
+
+unsafe fn capture_activitythread_app_classloader(env: JniEnv) -> *mut std::ffi::c_void {
+    let find_class: FindClassFn = jni_fn!(env, FindClassFn, JNI_FIND_CLASS);
+    let get_mid: GetMethodIdFn = jni_fn!(env, GetMethodIdFn, JNI_GET_METHOD_ID);
+    let get_static_mid: GetStaticMethodIdFn =
+        jni_fn!(env, GetStaticMethodIdFn, JNI_GET_STATIC_METHOD_ID);
+    let call_static_obj: CallStaticObjectMethodAFn =
+        jni_fn!(env, CallStaticObjectMethodAFn, JNI_CALL_STATIC_OBJECT_METHOD_A);
+    let call_obj: CallObjectMethodAFn = jni_fn!(env, CallObjectMethodAFn, JNI_CALL_OBJECT_METHOD_A);
+    let delete_local_ref: DeleteLocalRefFn = jni_fn!(env, DeleteLocalRefFn, JNI_DELETE_LOCAL_REF);
+
+    let c_at = CString::new("android/app/ActivityThread").unwrap();
+    let at_cls = find_class(env, c_at.as_ptr());
+    if at_cls.is_null() || jni_check_exc(env) {
+        return std::ptr::null_mut();
+    }
+
+    let c_cur = CString::new("currentActivityThread").unwrap();
+    let c_cur_sig = CString::new("()Landroid/app/ActivityThread;").unwrap();
+    let cur_mid = get_static_mid(env, at_cls, c_cur.as_ptr(), c_cur_sig.as_ptr());
+    if cur_mid.is_null() || jni_check_exc(env) {
+        delete_local_ref(env, at_cls);
+        return std::ptr::null_mut();
+    }
+
+    let at_obj = call_static_obj(env, at_cls, cur_mid, std::ptr::null());
+    if at_obj.is_null() || jni_check_exc(env) {
+        delete_local_ref(env, at_cls);
+        return std::ptr::null_mut();
+    }
+
+    let c_get_app = CString::new("getApplication").unwrap();
+    let c_get_app_sig = CString::new("()Landroid/app/Application;").unwrap();
+    let get_app_mid = get_mid(env, at_cls, c_get_app.as_ptr(), c_get_app_sig.as_ptr());
+    delete_local_ref(env, at_cls);
+    if get_app_mid.is_null() || jni_check_exc(env) {
+        delete_local_ref(env, at_obj);
+        return std::ptr::null_mut();
+    }
+
+    let app = call_obj(env, at_obj, get_app_mid, std::ptr::null());
+    delete_local_ref(env, at_obj);
+    if app.is_null() || jni_check_exc(env) {
+        return std::ptr::null_mut();
+    }
+
+    let c_ctx = CString::new("android/content/Context").unwrap();
+    let ctx_cls = find_class(env, c_ctx.as_ptr());
+    if ctx_cls.is_null() || jni_check_exc(env) {
+        delete_local_ref(env, app);
+        return std::ptr::null_mut();
+    }
+
+    let c_gcl = CString::new("getClassLoader").unwrap();
+    let c_gcl_sig = CString::new("()Ljava/lang/ClassLoader;").unwrap();
+    let gcl_mid = get_mid(env, ctx_cls, c_gcl.as_ptr(), c_gcl_sig.as_ptr());
+    delete_local_ref(env, ctx_cls);
+    if gcl_mid.is_null() || jni_check_exc(env) {
+        delete_local_ref(env, app);
+        return std::ptr::null_mut();
+    }
+
+    let cl = call_obj(env, app, gcl_mid, std::ptr::null());
+    delete_local_ref(env, app);
+    if cl.is_null() || jni_check_exc(env) {
+        return std::ptr::null_mut();
+    }
+
+    cl
+}
+
+unsafe fn capture_thread_context_classloader(env: JniEnv) -> *mut std::ffi::c_void {
+    let find_class: FindClassFn = jni_fn!(env, FindClassFn, JNI_FIND_CLASS);
+    let get_mid: GetMethodIdFn = jni_fn!(env, GetMethodIdFn, JNI_GET_METHOD_ID);
+    let get_static_mid: GetStaticMethodIdFn =
+        jni_fn!(env, GetStaticMethodIdFn, JNI_GET_STATIC_METHOD_ID);
+    let call_static_obj: CallStaticObjectMethodAFn =
+        jni_fn!(env, CallStaticObjectMethodAFn, JNI_CALL_STATIC_OBJECT_METHOD_A);
+    let call_obj: CallObjectMethodAFn = jni_fn!(env, CallObjectMethodAFn, JNI_CALL_OBJECT_METHOD_A);
+    let delete_local_ref: DeleteLocalRefFn = jni_fn!(env, DeleteLocalRefFn, JNI_DELETE_LOCAL_REF);
+
+    let c_thread = CString::new("java/lang/Thread").unwrap();
+    let thread_cls = find_class(env, c_thread.as_ptr());
+    if thread_cls.is_null() || jni_check_exc(env) {
+        return std::ptr::null_mut();
+    }
+
+    let c_cur = CString::new("currentThread").unwrap();
+    let c_cur_sig = CString::new("()Ljava/lang/Thread;").unwrap();
+    let cur_mid = get_static_mid(env, thread_cls, c_cur.as_ptr(), c_cur_sig.as_ptr());
+    if cur_mid.is_null() || jni_check_exc(env) {
+        delete_local_ref(env, thread_cls);
+        return std::ptr::null_mut();
+    }
+
+    let thread = call_static_obj(env, thread_cls, cur_mid, std::ptr::null());
+    if thread.is_null() || jni_check_exc(env) {
+        delete_local_ref(env, thread_cls);
+        return std::ptr::null_mut();
+    }
+
+    let c_get_ctx = CString::new("getContextClassLoader").unwrap();
+    let c_get_ctx_sig = CString::new("()Ljava/lang/ClassLoader;").unwrap();
+    let get_ctx_mid = get_mid(env, thread_cls, c_get_ctx.as_ptr(), c_get_ctx_sig.as_ptr());
+    delete_local_ref(env, thread_cls);
+    if get_ctx_mid.is_null() || jni_check_exc(env) {
+        delete_local_ref(env, thread);
+        return std::ptr::null_mut();
+    }
+
+    let loader = call_obj(env, thread, get_ctx_mid, std::ptr::null());
+    delete_local_ref(env, thread);
+    if loader.is_null() || jni_check_exc(env) {
+        return std::ptr::null_mut();
+    }
+
+    loader
+}
+
+unsafe fn capture_system_classloader(env: JniEnv) -> *mut std::ffi::c_void {
+    let find_class: FindClassFn = jni_fn!(env, FindClassFn, JNI_FIND_CLASS);
+    let get_static_mid: GetStaticMethodIdFn =
+        jni_fn!(env, GetStaticMethodIdFn, JNI_GET_STATIC_METHOD_ID);
+    let call_static_obj: CallStaticObjectMethodAFn =
+        jni_fn!(env, CallStaticObjectMethodAFn, JNI_CALL_STATIC_OBJECT_METHOD_A);
+    let delete_local_ref: DeleteLocalRefFn = jni_fn!(env, DeleteLocalRefFn, JNI_DELETE_LOCAL_REF);
+
+    let c_cl = CString::new("java/lang/ClassLoader").unwrap();
+    let cl_cls = find_class(env, c_cl.as_ptr());
+    if cl_cls.is_null() || jni_check_exc(env) {
+        return std::ptr::null_mut();
+    }
+
+    let c_get_sys = CString::new("getSystemClassLoader").unwrap();
+    let c_get_sys_sig = CString::new("()Ljava/lang/ClassLoader;").unwrap();
+    let get_sys_mid = get_static_mid(env, cl_cls, c_get_sys.as_ptr(), c_get_sys_sig.as_ptr());
+    if get_sys_mid.is_null() || jni_check_exc(env) {
+        delete_local_ref(env, cl_cls);
+        return std::ptr::null_mut();
+    }
+
+    let loader = call_static_obj(env, cl_cls, get_sys_mid, std::ptr::null());
+    delete_local_ref(env, cl_cls);
+    if loader.is_null() || jni_check_exc(env) {
+        return std::ptr::null_mut();
+    }
+
+    loader
+}
+
+unsafe fn append_classloader_chain(
+    env: JniEnv,
+    root: *mut std::ffi::c_void,
+    source: &str,
+    root_is_global_ref: bool,
+    out: &mut Vec<ClassLoaderInfo>,
+) {
+    if root.is_null() {
+        return;
+    }
+
+    let new_global_ref: NewGlobalRefFn = jni_fn!(env, NewGlobalRefFn, JNI_NEW_GLOBAL_REF);
+    let delete_local_ref: DeleteLocalRefFn = jni_fn!(env, DeleteLocalRefFn, JNI_DELETE_LOCAL_REF);
+    let find_class: FindClassFn = jni_fn!(env, FindClassFn, JNI_FIND_CLASS);
+    let get_mid: GetMethodIdFn = jni_fn!(env, GetMethodIdFn, JNI_GET_METHOD_ID);
+    let call_obj: CallObjectMethodAFn = jni_fn!(env, CallObjectMethodAFn, JNI_CALL_OBJECT_METHOD_A);
+
+    let c_cl = CString::new("java/lang/ClassLoader").unwrap();
+    let cl_cls = find_class(env, c_cl.as_ptr());
+    if cl_cls.is_null() || jni_check_exc(env) {
+        if !root_is_global_ref {
+            delete_local_ref(env, root);
+        }
+        return;
+    }
+
+    let c_parent = CString::new("getParent").unwrap();
+    let c_parent_sig = CString::new("()Ljava/lang/ClassLoader;").unwrap();
+    let parent_mid = get_mid(env, cl_cls, c_parent.as_ptr(), c_parent_sig.as_ptr());
+    delete_local_ref(env, cl_cls);
+    if parent_mid.is_null() || jni_check_exc(env) {
+        if !root_is_global_ref {
+            delete_local_ref(env, root);
+        }
+        return;
+    }
+
+    let mut current = root;
+    let mut is_global = root_is_global_ref;
+    let mut depth = 0usize;
+
+    loop {
+        if current.is_null() || depth >= 16 {
+            break;
+        }
+
+        let global = if is_global {
+            current
+        } else {
+            let g = new_global_ref(env, current);
+            delete_local_ref(env, current);
+            if g.is_null() || jni_check_exc(env) {
+                break;
+            }
+            remember_enumerated_classloader_ref(g as u64);
+            g
+        };
+
+        let (loader_class_name, description) = describe_classloader(env, global);
+        out.push(ClassLoaderInfo {
+            ptr: global as u64,
+            source: if depth == 0 {
+                source.to_string()
+            } else {
+                format!("{}#parent{}", source, depth)
+            },
+            loader_class_name,
+            description,
+        });
+
+        let parent = call_obj(env, global, parent_mid, std::ptr::null());
+        if parent.is_null() || jni_check_exc(env) {
+            break;
+        }
+
+        current = parent;
+        is_global = false;
+        depth += 1;
+    }
+}
+
+pub(super) unsafe fn enumerate_classloaders(env: JniEnv) -> Vec<ClassLoaderInfo> {
+    let mut out = Vec::new();
+
+    let override_cl = CL_OVERRIDE.load(std::sync::atomic::Ordering::Acquire);
+    if override_cl != 0 {
+        append_classloader_chain(
+            env,
+            override_cl as *mut std::ffi::c_void,
+            "override",
+            true,
+            &mut out,
+        );
+    }
+
+    if let Some(reflect) = REFLECT_IDS.get() {
+        if !reflect.app_classloader.is_null() {
+            append_classloader_chain(
+                env,
+                reflect.app_classloader,
+                "cached_app",
+                true,
+                &mut out,
+            );
+        }
+    }
+
+    let activitythread_cl = capture_activitythread_app_classloader(env);
+    append_classloader_chain(env, activitythread_cl, "activity_thread", false, &mut out);
+
+    let thread_ctx_cl = capture_thread_context_classloader(env);
+    append_classloader_chain(env, thread_ctx_cl, "thread_context", false, &mut out);
+
+    let system_cl = capture_system_classloader(env);
+    append_classloader_chain(env, system_cl, "system", false, &mut out);
+
+    out
+}
+
+pub(super) unsafe fn set_classloader_override(
+    env: JniEnv,
+    loader: *mut std::ffi::c_void,
+) -> bool {
+    if loader.is_null() {
+        return false;
+    }
+    update_app_classloader(env, loader);
+    CL_OVERRIDE.load(std::sync::atomic::Ordering::Acquire) != 0
+}
+
+pub(super) unsafe fn find_class_with_loader(
+    env: JniEnv,
+    loader: *mut std::ffi::c_void,
+    class_name: &str,
+) -> Option<&'static str> {
+    if loader.is_null() {
+        return None;
+    }
+
+    jni_check_exc(env);
+
+    let find_class: FindClassFn = jni_fn!(env, FindClassFn, JNI_FIND_CLASS);
+    let get_mid: GetMethodIdFn = jni_fn!(env, GetMethodIdFn, JNI_GET_METHOD_ID);
+    let get_static_mid: GetStaticMethodIdFn =
+        jni_fn!(env, GetStaticMethodIdFn, JNI_GET_STATIC_METHOD_ID);
+    let new_string_utf: NewStringUtfFn = jni_fn!(env, NewStringUtfFn, JNI_NEW_STRING_UTF);
+    let call_obj: CallObjectMethodAFn = jni_fn!(env, CallObjectMethodAFn, JNI_CALL_OBJECT_METHOD_A);
+    let call_static_obj: CallStaticObjectMethodAFn =
+        jni_fn!(env, CallStaticObjectMethodAFn, JNI_CALL_STATIC_OBJECT_METHOD_A);
+    let delete_local_ref: DeleteLocalRefFn = jni_fn!(env, DeleteLocalRefFn, JNI_DELETE_LOCAL_REF);
+
+    let dot_name = class_name.replace('/', ".");
+    let c_dot = CString::new(dot_name).ok()?;
+    let jstr = new_string_utf(env, c_dot.as_ptr());
+    if jstr.is_null() || jni_check_exc(env) {
+        return None;
+    }
+
+    let c_cl = CString::new("java/lang/ClassLoader").unwrap();
+    let cl_cls = find_class(env, c_cl.as_ptr());
+    if !cl_cls.is_null() && !jni_check_exc(env) {
+        let c_lc = CString::new("loadClass").unwrap();
+        let c_lc_sig = CString::new("(Ljava/lang/String;)Ljava/lang/Class;").unwrap();
+        let lc_mid = get_mid(env, cl_cls, c_lc.as_ptr(), c_lc_sig.as_ptr());
+        delete_local_ref(env, cl_cls);
+        if !lc_mid.is_null() && !jni_check_exc(env) {
+            let args: [*mut std::ffi::c_void; 1] = [jstr];
+            let result = call_obj(env, loader, lc_mid, args.as_ptr() as *const std::ffi::c_void);
+            if !result.is_null() && !jni_check_exc(env) {
+                delete_local_ref(env, result);
+                delete_local_ref(env, jstr);
+                return Some("loadClass");
+            }
+            jni_check_exc(env);
+        }
+    } else {
+        jni_check_exc(env);
+    }
+
+    let c_class = CString::new("java/lang/Class").unwrap();
+    let class_cls = find_class(env, c_class.as_ptr());
+    if class_cls.is_null() || jni_check_exc(env) {
+        delete_local_ref(env, jstr);
+        return None;
+    }
+
+    let c_for_name = CString::new("forName").unwrap();
+    let c_for_name_sig = CString::new(
+        "(Ljava/lang/String;ZLjava/lang/ClassLoader;)Ljava/lang/Class;",
+    )
+    .unwrap();
+    let for_name_mid = get_static_mid(env, class_cls, c_for_name.as_ptr(), c_for_name_sig.as_ptr());
+    if for_name_mid.is_null() || jni_check_exc(env) {
+        delete_local_ref(env, class_cls);
+        delete_local_ref(env, jstr);
+        return None;
+    }
+
+    let args: [*mut std::ffi::c_void; 3] = [jstr, std::ptr::null_mut(), loader];
+    let result = call_static_obj(
+        env,
+        class_cls,
+        for_name_mid,
+        args.as_ptr() as *const std::ffi::c_void,
+    );
+    delete_local_ref(env, class_cls);
+    delete_local_ref(env, jstr);
+    if result.is_null() || jni_check_exc(env) {
+        return None;
+    }
+
+    delete_local_ref(env, result);
+    Some("Class.forName")
+}
 
 /// 绕过 Android hidden API 限制。
 /// 调用 VMRuntime.getRuntime().setHiddenApiExemptions(new String[]{""})
@@ -665,12 +1132,17 @@ pub(super) unsafe fn update_app_classloader(env: JniEnv, cl_local: *mut std::ffi
     }
 
     let new_global_ref: NewGlobalRefFn = jni_fn!(env, NewGlobalRefFn, JNI_NEW_GLOBAL_REF);
+    let delete_global_ref: DeleteGlobalRefFn =
+        jni_fn!(env, DeleteGlobalRefFn, JNI_DELETE_GLOBAL_REF);
     let gl = new_global_ref(env, cl_local);
     if gl.is_null() {
         return;
     }
 
-    CL_OVERRIDE.store(gl as u64, std::sync::atomic::Ordering::Release);
+    let old = CL_OVERRIDE.swap(gl as u64, std::sync::atomic::Ordering::AcqRel);
+    if old != 0 && old != gl as u64 {
+        delete_global_ref(env, old as *mut std::ffi::c_void);
+    }
 
     // 缓存 loadClass method ID（只需设置一次）
     if LC_MID_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) == 0 {

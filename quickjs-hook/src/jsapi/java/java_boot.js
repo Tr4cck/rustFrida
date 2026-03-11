@@ -8,12 +8,18 @@
     var _invokeStaticMethod = Java._invokeStaticMethod;
     var _newObject = Java._newObject;
     var _getFieldAuto = Java._getFieldAuto;
+    var _classLoaders = Java._classLoaders;
+    var _findClassWithLoader = Java._findClassWithLoader;
+    var _setClassLoader = Java._setClassLoader;
     delete Java.hook;
     delete Java.unhook;
     delete Java._methods;
     delete Java._invokeStaticMethod;
     delete Java._newObject;
     delete Java._getFieldAuto;
+    delete Java._classLoaders;
+    delete Java._findClassWithLoader;
+    delete Java._setClassLoader;
 
     function _argsFrom(argsLike, start) {
         var args = [];
@@ -604,5 +610,32 @@
         }
 
         _readyCallbacks.push(fn);
+    };
+
+    Java.classLoaders = function() {
+        return _classLoaders();
+    };
+
+    function _normalizeLoaderArg(loader) {
+        if (loader !== null && typeof loader === "object") {
+            if (loader.ptr !== undefined) {
+                return loader.ptr;
+            }
+            if (loader.__jptr !== undefined) {
+                return loader.__jptr;
+            }
+        }
+        return loader;
+    }
+
+    Java.findClassWithLoader = function(loader, className) {
+        if (typeof className !== "string") {
+            throw new Error("Java.findClassWithLoader(loader, className) requires a string className");
+        }
+        return _findClassWithLoader(_normalizeLoaderArg(loader), className);
+    };
+
+    Java.setClassLoader = function(loader) {
+        return _setClassLoader(_normalizeLoaderArg(loader));
     };
 })();

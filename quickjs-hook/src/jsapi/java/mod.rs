@@ -50,6 +50,7 @@ pub(crate) use reflect::get_class_name_unchecked;
 use crate::context::JSContext;
 use crate::ffi;
 use crate::ffi::hook as hook_ffi;
+use crate::jsapi::callback_util::{set_js_u64_property, throw_internal_error, throw_type_error};
 use crate::jsapi::console::output_message;
 use crate::jsapi::util::add_cfunction_to_object;
 use crate::value::JSValue;
@@ -209,6 +210,141 @@ unsafe extern "C" fn js_is_classloader_ready(
     JSValue::bool(is_classloader_ready()).raw()
 }
 
+unsafe fn js_loader_arg_to_ptr(ctx: *mut ffi::JSContext, arg: JSValue) -> u64 {
+    if let Some(v) = arg.to_u64(ctx) {
+        return v;
+    }
+
+    if arg.is_object() {
+        let jptr = arg.get_property(ctx, "__jptr");
+        let jptr_val = jptr.to_u64(ctx).unwrap_or(0);
+        jptr.free(ctx);
+        if jptr_val != 0 {
+            return jptr_val;
+        }
+
+        let ptr_prop = arg.get_property(ctx, "ptr");
+        let ptr_val = ptr_prop.to_u64(ctx).unwrap_or(0);
+        ptr_prop.free(ctx);
+        if ptr_val != 0 {
+            return ptr_val;
+        }
+    }
+
+    0
+}
+
+unsafe extern "C" fn js_java_classloaders(
+    ctx: *mut ffi::JSContext,
+    _this: ffi::JSValue,
+    _argc: i32,
+    _argv: *mut ffi::JSValue,
+) -> ffi::JSValue {
+    let env = match ensure_jni_initialized() {
+        Ok(env) => env,
+        Err(msg) => return throw_internal_error(ctx, msg),
+    };
+
+    let loaders = enumerate_classloaders(env);
+    let arr = ffi::JS_NewArray(ctx);
+    for (index, loader) in loaders.iter().enumerate() {
+        let obj = ffi::JS_NewObject(ctx);
+        set_js_u64_property(ctx, obj, "ptr", loader.ptr);
+        JSValue(obj).set_property(ctx, "source", JSValue::string(ctx, &loader.source));
+        JSValue(obj).set_property(
+            ctx,
+            "loaderClassName",
+            JSValue::string(ctx, &loader.loader_class_name),
+        );
+        JSValue(obj).set_property(ctx, "description", JSValue::string(ctx, &loader.description));
+        ffi::JS_SetPropertyUint32(ctx, arr, index as u32, obj);
+    }
+
+    arr
+}
+
+unsafe extern "C" fn js_java_find_class_with_loader(
+    ctx: *mut ffi::JSContext,
+    _this: ffi::JSValue,
+    argc: i32,
+    argv: *mut ffi::JSValue,
+) -> ffi::JSValue {
+    if argc < 2 {
+        return throw_type_error(
+            ctx,
+            b"Java._findClassWithLoader() requires 2 arguments: loader, className\0",
+        );
+    }
+
+    let loader_ptr = js_loader_arg_to_ptr(ctx, JSValue(*argv));
+    if loader_ptr == 0 {
+        return throw_type_error(
+            ctx,
+            b"Java._findClassWithLoader() loader must be a loader object or pointer\0",
+        );
+    }
+
+    let class_name = match JSValue(*argv.add(1)).to_string(ctx) {
+        Some(v) => v,
+        None => {
+            return throw_type_error(
+                ctx,
+                b"Java._findClassWithLoader() className must be a string\0",
+            )
+        }
+    };
+
+    let env = match ensure_jni_initialized() {
+        Ok(env) => env,
+        Err(msg) => return throw_internal_error(ctx, msg),
+    };
+
+    let result = ffi::JS_NewObject(ctx);
+    let via = find_class_with_loader(env, loader_ptr as *mut std::ffi::c_void, &class_name);
+    JSValue(result).set_property(ctx, "ok", JSValue::bool(via.is_some()));
+    JSValue(result).set_property(ctx, "className", JSValue::string(ctx, &class_name));
+    set_js_u64_property(ctx, result, "loaderPtr", loader_ptr);
+    if let Some(via) = via {
+        JSValue(result).set_property(ctx, "via", JSValue::string(ctx, via));
+    } else {
+        JSValue(result).set_property(ctx, "via", JSValue::null());
+    }
+    result
+}
+
+unsafe extern "C" fn js_java_set_classloader(
+    ctx: *mut ffi::JSContext,
+    _this: ffi::JSValue,
+    argc: i32,
+    argv: *mut ffi::JSValue,
+) -> ffi::JSValue {
+    if argc < 1 {
+        return throw_type_error(
+            ctx,
+            b"Java._setClassLoader() requires 1 argument: loader\0",
+        );
+    }
+
+    let loader_ptr = js_loader_arg_to_ptr(ctx, JSValue(*argv));
+    if loader_ptr == 0 {
+        return throw_type_error(
+            ctx,
+            b"Java._setClassLoader() loader must be a loader object or pointer\0",
+        );
+    }
+
+    let env = match ensure_jni_initialized() {
+        Ok(env) => env,
+        Err(msg) => return throw_internal_error(ctx, msg),
+    };
+
+    JSValue::bool(set_classloader_override(
+        env,
+        loader_ptr as *mut std::ffi::c_void,
+    ))
+    .raw()
+}
+
 /// Register Java API: hook/unhook (C-level) + _methods, then eval boot script
 /// to set up the Proxy-based Java.use() API.
 pub fn register_java_api(ctx: &JSContext) {
@@ -290,6 +426,21 @@ pub fn register_java_api(ctx: &JSContext) {
             js_is_classloader_ready,
             0,
         );
+        add_cfunction_to_object(ctx_ptr, java_obj, "_classLoaders", js_java_classloaders, 0);
+        add_cfunction_to_object(
+            ctx_ptr,
+            java_obj,
+            "_findClassWithLoader",
+            js_java_find_class_with_loader,
+            2,
+        );
+        add_cfunction_to_object(
+            ctx_ptr,
+            java_obj,
+            "_setClassLoader",
+            js_java_set_classloader,
+            1,
+        );
 
         // Set Java object on global
         global.set_property(ctx.as_ptr(), "Java", JSValue(java_obj));
@@ -358,6 +509,12 @@ unsafe fn release_java_hook_resources(
 /// - WouldBlock: 当前线程已持有锁（正常路径），JS callback 释放安全
 /// - Ok: 意外的非锁定路径调用，获取锁后释放 JS callback
 pub fn cleanup_java_hooks() {
+    if let Ok(env) = ensure_jni_initialized() {
+        unsafe {
+            cleanup_enumerated_classloader_refs(env);
+        }
+    }
+
     // 【关键】先清空 C 侧 ART router 查表，切断路由 → 防止并发线程通过
     // Layer 1 router 访问即将释放的 replacement ArtMethod (UAF)
     unsafe {
